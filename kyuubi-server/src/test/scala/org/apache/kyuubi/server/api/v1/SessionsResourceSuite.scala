@@ -18,24 +18,23 @@
 package org.apache.kyuubi.server.api.v1
 
 import javax.ws.rs.client.Entity
-import javax.ws.rs.core.MediaType
+import javax.ws.rs.core.{MediaType, Response}
 
-import org.junit.Test
+import scala.concurrent.duration._
 
-import org.apache.kyuubi.server.RestApiBaseSuite
-import org.apache.kyuubi.server.RestFrontendServiceSuite
+import org.apache.kyuubi.KyuubiFunSuite
+import org.apache.kyuubi.server.{RestFrontendService, RestFrontendServiceSuite}
 import org.apache.kyuubi.session.SessionHandle
 
-class SessionsResourceSuite extends RestApiBaseSuite {
+class SessionsResourceSuite extends KyuubiFunSuite {
 
-  @Test
-  def testOpenAndCountSession: Unit = {
+  test("test open and count session") {
     val requestObj = SessionOpenRequest(
       1, "admin", "123456", "localhost", Map("testConfig" -> "testValue"))
 
     RestFrontendServiceSuite.withKyuubiRestServer {
-      (_, _, _) =>
-        var response = target(s"api/v1/sessions")
+      (_, _, _, webTarget) =>
+        var response = webTarget.path("api/v1/sessions")
           .request(MediaType.APPLICATION_JSON_TYPE)
           .post(Entity.entity(requestObj, MediaType.APPLICATION_JSON_TYPE))
 
@@ -47,20 +46,19 @@ class SessionsResourceSuite extends RestApiBaseSuite {
         assert(sessionHandle.identifier != null)
 
         // verify the open session count
-        response = target("api/v1/sessions/count").request().get()
+        response = webTarget.path("api/v1/sessions/count").request().get()
         val openedSessionCount = response.readEntity(classOf[SessionOpenCount])
         assert(openedSessionCount.openSessionCount == 1)
     }
   }
 
-  @Test
-  def testCloseAndCountSession: Unit = {
+  test("test close and count session") {
     val requestObj = SessionOpenRequest(
       1, "admin", "123456", "localhost", Map("testConfig" -> "testValue"))
 
     RestFrontendServiceSuite.withKyuubiRestServer {
-      (_, _, _) =>
-        var response = target(s"api/v1/sessions")
+      (_, _, _, webTarget) =>
+        var response = webTarget.path("api/v1/sessions")
           .request(MediaType.APPLICATION_JSON_TYPE)
           .post(Entity.entity(requestObj, MediaType.APPLICATION_JSON_TYPE))
 
@@ -74,14 +72,103 @@ class SessionsResourceSuite extends RestApiBaseSuite {
         // close a opened session
         val serializedSessionHandle = s"${sessionHandle.identifier.publicId}|" +
           s"${sessionHandle.identifier.secretId}|${sessionHandle.protocol.getValue}"
-        response = target(s"api/v1/sessions/$serializedSessionHandle").request().delete()
+        response = webTarget.path(s"api/v1/sessions/$serializedSessionHandle").request().delete()
         assert(200 == response.getStatus)
 
         // verify the open session count again
-        response = target("api/v1/sessions/count").request().get()
+        response = webTarget.path("api/v1/sessions/count").request().get()
         val openedSessionCount = response.readEntity(classOf[SessionOpenCount])
         assert(openedSessionCount.openSessionCount == 0)
     }
   }
 
+  test("test execPoolStatistic") {
+    RestFrontendServiceSuite.withKyuubiRestServer {
+      (restFrontendService: RestFrontendService, _, _, webTarget) =>
+
+        val sessionManager = restFrontendService.be.sessionManager
+        val future = sessionManager.submitBackgroundOperation(() => {
+          Thread.sleep(1000)
+        })
+
+        // verify the exec pool statistic
+        var response = webTarget.path("api/v1/sessions/execpool/statistic").request().get()
+        val execPoolStatistic1 = response.readEntity(classOf[ExecPoolStatistic])
+        assert(execPoolStatistic1.execPoolSize == 1 && execPoolStatistic1.execPoolActiveCount == 1)
+
+        future.cancel(true)
+        eventually(timeout(3.seconds), interval(200.milliseconds)) {
+          response = webTarget.path("api/v1/sessions/execpool/statistic").request().get()
+          val statistic = response.readEntity(classOf[ExecPoolStatistic])
+          assert(statistic.execPoolSize == 1 && statistic.execPoolActiveCount == 0)
+        }
+
+        sessionManager.stop()
+        response = webTarget.path("api/v1/sessions/execpool/statistic").request().get()
+        val execPoolStatistic3 = response.readEntity(classOf[ExecPoolStatistic])
+        assert(execPoolStatistic3.execPoolSize == 0 && execPoolStatistic3.execPoolActiveCount == 0)
+
+    }
+  }
+
+  test("test getSessionList") {
+    val requestObj = SessionOpenRequest(
+      1, "admin", "123456", "localhost", Map("testConfig" -> "testValue"))
+
+    RestFrontendServiceSuite.withKyuubiRestServer {
+      (_, _, _, webTarget) =>
+        var response = webTarget.path("api/v1/sessions")
+          .request(MediaType.APPLICATION_JSON_TYPE)
+          .post(Entity.entity(requestObj, MediaType.APPLICATION_JSON_TYPE))
+
+        // get session list
+        var response2 = webTarget.path("api/v1/sessions").request().get()
+        assert(200 == response2.getStatus)
+        val sessions1 = response2.readEntity(classOf[SessionList])
+        assert(sessions1.sessionList.nonEmpty)
+
+        // close a opened session
+        val sessionHandle = response.readEntity(classOf[SessionHandle])
+        val serializedSessionHandle = s"${sessionHandle.identifier.publicId}|" +
+          s"${sessionHandle.identifier.secretId}|${sessionHandle.protocol.getValue}"
+        response = webTarget.path(s"api/v1/sessions/$serializedSessionHandle").request().delete()
+        assert(200 == response.getStatus)
+
+        // get session list again
+        response2 = webTarget.path("api/v1/sessions").request().get()
+        assert(200 == response2.getStatus)
+        val sessions2 = response2.readEntity(classOf[SessionList])
+        assert(sessions2.sessionList.isEmpty)
+    }
+  }
+
+  test("test getSessionDetail") {
+    val requestObj = SessionOpenRequest(
+      1, "admin", "123456", "localhost", Map("testConfig" -> "testValue"))
+
+    RestFrontendServiceSuite.withKyuubiRestServer {
+      (_, _, _, webTarget) =>
+        var response: Response = webTarget.path("api/v1/sessions")
+          .request(MediaType.APPLICATION_JSON_TYPE)
+          .post(Entity.entity(requestObj, MediaType.APPLICATION_JSON_TYPE))
+
+        val sessionHandle = response.readEntity(classOf[SessionHandle])
+        val serializedSessionHandle = s"${sessionHandle.identifier.publicId}|" +
+          s"${sessionHandle.identifier.secretId}|${sessionHandle.protocol.getValue}"
+
+        // get session detail
+        response = webTarget.path(s"api/v1/sessions/$serializedSessionHandle").request().get()
+        assert(200 == response.getStatus)
+        var sessions = response.readEntity(classOf[SessionDetail])
+        assert(sessions.configs.nonEmpty)
+
+        // close a opened session
+        response = webTarget.path(s"api/v1/sessions/$serializedSessionHandle").request().delete()
+        assert(200 == response.getStatus)
+
+        // get session detail again
+        response = webTarget.path(s"api/v1/sessions/$serializedSessionHandle").request().get()
+        assert(404 == response.getStatus)
+    }
+  }
 }

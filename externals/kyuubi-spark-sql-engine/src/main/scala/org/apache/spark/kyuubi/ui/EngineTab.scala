@@ -25,13 +25,12 @@ import scala.util.control.NonFatal
 import org.apache.kyuubi.{Logging, Utils}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.engine.spark.SparkSQLEngine
-import org.apache.kyuubi.engine.spark.events.EngineEventsStore
 import org.apache.kyuubi.service.ServiceState
 
 /**
  * Note that [[SparkUITab]] is private for Spark
  */
-case class EngineTab(engine: SparkSQLEngine, store: EngineEventsStore)
+case class EngineTab(engine: SparkSQLEngine)
   extends SparkUITab(engine.spark.sparkContext.ui.orNull, "kyuubi") with Logging {
 
   override val name: String = "Kyuubi Query Engine"
@@ -39,6 +38,7 @@ case class EngineTab(engine: SparkSQLEngine, store: EngineEventsStore)
 
   engine.spark.sparkContext.ui.foreach { ui =>
     this.attachPage(EnginePage(this))
+    this.attachPage(EngineSessionPage(this))
     ui.attachTab(this)
     Utils.addShutdownHook(() => ui.detachTab(this))
   }

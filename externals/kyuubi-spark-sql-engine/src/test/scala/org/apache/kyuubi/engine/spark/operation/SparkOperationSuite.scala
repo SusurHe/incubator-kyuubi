@@ -17,7 +17,7 @@
 
 package org.apache.kyuubi.engine.spark.operation
 
-import java.sql.{DatabaseMetaData, ResultSet, SQLFeatureNotSupportedException}
+import java.sql.{DatabaseMetaData, ResultSet, SQLException, SQLFeatureNotSupportedException}
 
 import scala.collection.JavaConverters._
 import scala.util.Random
@@ -27,11 +27,7 @@ import org.apache.hadoop.hive.thrift.{DelegationTokenIdentifier => HiveTokenIden
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.security.{Credentials, UserGroupInformation}
 import org.apache.hadoop.security.token.{Token, TokenIdentifier}
-import org.apache.hive.common.util.HiveVersionInfo
-import org.apache.hive.service.cli.HiveSQLException
 import org.apache.hive.service.rpc.thrift._
-import org.apache.hive.service.rpc.thrift.TCLIService.Iface
-import org.apache.hive.service.rpc.thrift.TOperationState._
 import org.apache.spark.kyuubi.SparkContextHelper
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry
 import org.apache.spark.sql.types._
@@ -39,11 +35,11 @@ import org.apache.spark.sql.types._
 import org.apache.kyuubi.Utils
 import org.apache.kyuubi.engine.spark.WithSparkSQLEngine
 import org.apache.kyuubi.engine.spark.shim.SparkCatalogShim
-import org.apache.kyuubi.operation.HiveJDBCTests
+import org.apache.kyuubi.operation.{HiveMetadataTests, SparkQueryTests}
 import org.apache.kyuubi.operation.meta.ResultSetSchemaConstant._
 import org.apache.kyuubi.util.KyuubiHadoopUtils
 
-class SparkOperationSuite extends WithSparkSQLEngine with HiveJDBCTests {
+class SparkOperationSuite extends WithSparkSQLEngine with HiveMetadataTests with SparkQueryTests {
 
   override protected def jdbcUrl: String = getJdbcUrl
   override def withKyuubiConf: Map[String, String] = Map.empty
@@ -85,7 +81,7 @@ class SparkOperationSuite extends WithSparkSQLEngine with HiveJDBCTests {
 
     val ddl =
       s"""
-         |CREATE TABLE IF NOT EXISTS $dftSchema.$tableName (
+         |CREATE TABLE IF NOT EXISTS $defaultSchema.$tableName (
          |  ${schema.toDDL}
          |)
          |USING parquet""".stripMargin
@@ -96,7 +92,7 @@ class SparkOperationSuite extends WithSparkSQLEngine with HiveJDBCTests {
       val metaData = statement.getConnection.getMetaData
 
       Seq("%", null, ".*", "c.*") foreach { columnPattern =>
-        val rowSet = metaData.getColumns("", dftSchema, tableName, columnPattern)
+        val rowSet = metaData.getColumns("", defaultSchema, tableName, columnPattern)
 
         import java.sql.Types._
         val expectedJavaTypes = Seq(BOOLEAN, TINYINT, SMALLINT, INTEGER, BIGINT, FLOAT, DOUBLE,
@@ -107,7 +103,7 @@ class SparkOperationSuite extends WithSparkSQLEngine with HiveJDBCTests {
 
         while (rowSet.next()) {
           assert(rowSet.getString(TABLE_CAT) === SparkCatalogShim.SESSION_CATALOG)
-          assert(rowSet.getString(TABLE_SCHEM) === dftSchema)
+          assert(rowSet.getString(TABLE_SCHEM) === defaultSchema)
           assert(rowSet.getString(TABLE_NAME) === tableName)
           assert(rowSet.getString(COLUMN_NAME) === schema(pos).name)
           assert(rowSet.getInt(DATA_TYPE) === expectedJavaTypes(pos))
@@ -213,7 +209,7 @@ class SparkOperationSuite extends WithSparkSQLEngine with HiveJDBCTests {
       val apis = Seq(metaData.getFunctions _, metaData.getProcedures _)
       Seq("to_timestamp", "date_part", "lpad", "date_format", "cos", "sin").foreach { func =>
         apis.foreach { apiFunc =>
-          val resultSet = apiFunc("", dftSchema, func)
+          val resultSet = apiFunc("", defaultSchema, func)
           while (resultSet.next()) {
             val exprInfo = FunctionRegistry.expressions(func)._1
             assert(resultSet.getString(FUNCTION_CAT).isEmpty)
@@ -408,8 +404,8 @@ class SparkOperationSuite extends WithSparkSQLEngine with HiveJDBCTests {
       assert(metaData.allTablesAreSelectable)
       assert(metaData.getDatabaseProductName === "Spark SQL")
       assert(metaData.getDatabaseProductVersion === KYUUBI_VERSION)
-      assert(metaData.getDriverName === "Hive JDBC")
-      assert(metaData.getDriverVersion === HiveVersionInfo.getVersion)
+      assert(metaData.getDriverName === "Kyuubi Project Hive JDBC Shaded Client")
+      assert(metaData.getDriverVersion === KYUUBI_VERSION)
       assert(metaData.getDatabaseMajorVersion === Utils.majorVersion(KYUUBI_VERSION))
       assert(metaData.getDatabaseMinorVersion === Utils.minorVersion(KYUUBI_VERSION))
       assert(metaData.getIdentifierQuoteString === " ",
@@ -456,9 +452,9 @@ class SparkOperationSuite extends WithSparkSQLEngine with HiveJDBCTests {
       assert(metaData.getDefaultTransactionIsolation === java.sql.Connection.TRANSACTION_NONE)
       assert(!metaData.supportsTransactions)
       assert(!metaData.getProcedureColumns("", "%", "%", "%").next())
-      intercept[HiveSQLException](metaData.getPrimaryKeys("", "default", ""))
+      intercept[SQLException](metaData.getPrimaryKeys("", "default", ""))
       assert(!metaData.getImportedKeys("", "default", "").next())
-      intercept[HiveSQLException] {
+      intercept[SQLException] {
         metaData.getCrossReference("", "default", "src", "", "default", "src2")
       }
       assert(!metaData.getIndexInfo("", "default", "src", true, true).next())
@@ -495,14 +491,6 @@ class SparkOperationSuite extends WithSparkSQLEngine with HiveJDBCTests {
     }
   }
 
-  private def waitForOperationToComplete(client: Iface, op: TOperationHandle): Unit = {
-    val req = new TGetOperationStatusReq(op)
-    var state = client.GetOperationStatus(req).getOperationState
-    while (state == INITIALIZED_STATE || state == PENDING_STATE || state == RUNNING_STATE) {
-      state = client.GetOperationStatus(req).getOperationState
-    }
-
-  }
   test("basic open | execute | close") {
     withThriftClient { client =>
       val operationManager = engine.backendService.sessionManager.
