@@ -19,33 +19,66 @@ package org.apache.kyuubi.engine.spark
 
 import java.time.{Instant, LocalDateTime, ZoneId}
 
+import scala.annotation.meta.getter
+
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.kvstore.KVIndex
 
-import org.apache.kyuubi.Utils
+import org.apache.kyuubi.Logging
+import org.apache.kyuubi.engine.SemanticVersion
 
-object KyuubiSparkUtil {
+object KyuubiSparkUtil extends Logging {
+
+  type KVIndexParam = KVIndex @getter
+
+  final val SPARK_SCHEDULER_POOL_KEY = "spark.scheduler.pool"
+  final val SPARK_SQL_EXECUTION_ID_KEY = "spark.sql.execution.id"
 
   def globalSparkContext: SparkContext = SparkSession.active.sparkContext
 
-  def engineId: String =
-    globalSparkContext.applicationAttemptId.getOrElse(globalSparkContext.applicationId)
+  def initializeSparkSession(spark: SparkSession, initializationSQLs: Seq[String]): Unit = {
+    initializationSQLs.foreach { sql =>
+      spark.sparkContext.setJobGroup(
+        "initialization sql queries",
+        sql,
+        interruptOnCancel = true)
+      debug(s"Execute initialization sql: $sql")
+      try {
+        spark.sql(sql).isEmpty
+      } finally {
+        spark.sparkContext.clearJobGroup()
+      }
+    }
+  }
+
+  def engineId: String = globalSparkContext.applicationId
+  def engineName: String = globalSparkContext.appName
+  def engineUrl: String = globalSparkContext.getConf.getOption(
+    "spark.org.apache.hadoop.yarn.server.webproxy.amfilter.AmIpFilter.param.PROXY_URI_BASES")
+    .orElse(globalSparkContext.uiWebUrl).getOrElse("")
+  def deployMode: String = {
+    if (globalSparkContext.getConf.getBoolean("spark.kubernetes.submitInDriver", false)) {
+      "cluster"
+    } else {
+      globalSparkContext.deployMode
+    }
+  }
 
   lazy val diagnostics: String = {
     val sc = globalSparkContext
-    val webUrl = sc.getConf.getOption(
-      "spark.org.apache.hadoop.yarn.server.webproxy.amfilter.AmIpFilter.param.PROXY_URI_BASES")
-      .orElse(sc.uiWebUrl).getOrElse("")
     // scalastyle:off line.size.limit
+    // format: off
     s"""
-       |           Spark application name: ${sc.appName}
+       |           Spark application name: $engineName
        |                 application ID: $engineId
-       |                 application web UI: $webUrl
+       |                 application web UI: $engineUrl
        |                 master: ${sc.master}
-       |                 deploy mode: ${sc.deployMode}
+       |                 deploy mode: $deployMode
        |                 version: ${sc.version}
        |           Start time: ${LocalDateTime.ofInstant(Instant.ofEpochMilli(sc.startTime), ZoneId.systemDefault)}
        |           User: ${sc.sparkUser}""".stripMargin
+    // format: on
     // scalastyle:on line.size.limit
   }
 
@@ -64,6 +97,7 @@ object KyuubiSparkUtil {
 
   lazy val sparkMajorMinorVersion: (Int, Int) = {
     val runtimeSparkVer = org.apache.spark.SPARK_VERSION
-    Utils.majorMinorVersion(runtimeSparkVer)
+    val runtimeVersion = SemanticVersion(runtimeSparkVer)
+    (runtimeVersion.majorVersion, runtimeVersion.minorVersion)
   }
 }

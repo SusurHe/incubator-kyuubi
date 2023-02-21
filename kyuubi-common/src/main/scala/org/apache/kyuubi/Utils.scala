@@ -17,24 +17,36 @@
 
 package org.apache.kyuubi
 
-import java.io.{File, InputStreamReader, IOException, PrintWriter, StringWriter}
+import java.io._
 import java.net.{Inet4Address, InetAddress, NetworkInterface}
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Path, Paths}
-import java.util.{Properties, TimeZone, UUID}
+import java.nio.file.{Files, Path, Paths, StandardCopyOption}
+import java.text.SimpleDateFormat
+import java.util.{Date, Properties, TimeZone, UUID}
+import java.util.concurrent.atomic.AtomicLong
 
 import scala.collection.JavaConverters._
+import scala.sys.process._
+import scala.util.control.NonFatal
+import scala.util.matching.Regex
 
 import org.apache.commons.lang3.SystemUtils
 import org.apache.commons.lang3.time.DateFormatUtils
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.hadoop.util.ShutdownHookManager
 
+import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.internal.Tests.IS_TESTING
 
 object Utils extends Logging {
 
   import org.apache.kyuubi.config.KyuubiConf._
+
+  /**
+   * An atomic counter used in writeToTempFile method
+   * avoiding duplication in temporary file name generation
+   */
+  private lazy val tempFileIdCounter: AtomicLong = new AtomicLong(0)
 
   def strToSeq(s: String, sp: String = ","): Seq[String] = {
     require(s != null)
@@ -46,12 +58,16 @@ object Utils extends Logging {
   }
 
   def getDefaultPropertiesFile(env: Map[String, String] = sys.env): Option[File] = {
+    getPropertiesFile(KYUUBI_CONF_FILE_NAME, env)
+  }
+
+  def getPropertiesFile(fileName: String, env: Map[String, String] = sys.env): Option[File] = {
     env.get(KYUUBI_CONF_DIR)
       .orElse(env.get(KYUUBI_HOME).map(_ + File.separator + "conf"))
-      .map( d => new File(d + File.separator + KYUUBI_CONF_FILE_NAME))
+      .map(d => new File(d + File.separator + fileName))
       .filter(_.exists())
       .orElse {
-        Option(getClass.getClassLoader.getResource(KYUUBI_CONF_FILE_NAME)).map { url =>
+        Option(Utils.getContextOrKyuubiClassLoader.getResource(fileName)).map { url =>
           new File(url.getFile)
         }.filter(_.exists())
       }
@@ -74,7 +90,8 @@ object Utils extends Logging {
       } catch {
         case e: IOException =>
           throw new KyuubiException(
-            s"Failed when loading Kyuubi properties from ${f.getAbsolutePath}", e)
+            s"Failed when loading Kyuubi properties from ${f.getAbsolutePath}",
+            e)
       }
     }.getOrElse(Map.empty)
   }
@@ -96,8 +113,23 @@ object Utils extends Logging {
         case e: IOException => error = e
       }
     }
-    throw new IOException("Failed to create a temp directory (under " + root + ") after " +
-      MAX_DIR_CREATION_ATTEMPTS + " attempts!", error)
+    throw new IOException(
+      "Failed to create a temp directory (under " + root + ") after " + MAX_DIR_CREATION_ATTEMPTS +
+        " attempts!",
+      error)
+  }
+
+  def getAbsolutePathFromWork(pathStr: String, env: Map[String, String] = sys.env): Path = {
+    val path = Paths.get(pathStr)
+    if (path.isAbsolute) {
+      path
+    } else {
+      val workDir = env.get("KYUUBI_WORK_DIR_ROOT") match {
+        case Some(dir) => dir
+        case _ => System.getProperty("user.dir")
+      }
+      Paths.get(workDir, pathStr)
+    }
   }
 
   /**
@@ -116,29 +148,60 @@ object Utils extends Logging {
    * automatically deleted when the VM shuts down.
    */
   def createTempDir(
-      root: String = System.getProperty("java.io.tmpdir"),
-      namePrefix: String = "kyuubi"): Path = {
-    val dir = createDirectory(root, namePrefix)
+      prefix: String = "kyuubi",
+      root: String = System.getProperty("java.io.tmpdir")): Path = {
+    val dir = createDirectory(root, prefix)
     dir.toFile.deleteOnExit()
     dir
   }
 
+  /**
+   * Copies bytes from an InputStream source to a newly created temporary file
+   * created in the directory destination. The temporary file will be created
+   * with new name by adding random identifiers before original file name's suffix,
+   * and the file will be deleted on JVM exit. The directories up to destination
+   * will be created if they don't already exist. destination will be overwritten
+   * if it already exists. The source stream is closed.
+   * @param source the InputStream to copy bytes from, must not be null, will be closed
+   * @param dir the directory path for temp file creation
+   * @param fileName original file name with suffix
+   * @return the created temp file in dir
+   */
+  def writeToTempFile(source: InputStream, dir: Path, fileName: String): File = {
+    try {
+      if (source == null) {
+        throw new IOException("the source inputstream is null")
+      }
+      if (!dir.toFile.exists()) {
+        dir.toFile.mkdirs()
+      }
+      val (prefix, suffix) = fileName.lastIndexOf(".") match {
+        case i if i > 0 => (fileName.substring(0, i), fileName.substring(i))
+        case _ => (fileName, "")
+      }
+      val currentTime = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date())
+      val identifier = s"$currentTime-${tempFileIdCounter.incrementAndGet()}"
+      val filePath = Paths.get(dir.toString, s"$prefix-$identifier$suffix")
+      try {
+        Files.copy(source, filePath, StandardCopyOption.REPLACE_EXISTING)
+      } finally {
+        source.close()
+      }
+      val file = filePath.toFile
+      file.deleteOnExit()
+      file
+    } catch {
+      case e: Exception =>
+        error(
+          s"failed to write to temp file in path $dir, original file name: $fileName",
+          e)
+        throw e
+    }
+  }
+
   def currentUser: String = UserGroupInformation.getCurrentUser.getShortUserName
 
-  private val majorMinorRegex = """^(\d+)\.(\d+)(\..*)?$""".r
   private val shortVersionRegex = """^(\d+\.\d+\.\d+)(.*)?$""".r
-
-  /**
-   * Given a Kyuubi/Spark/Hive version string, return the major version number.
-   * E.g., for 2.0.1-SNAPSHOT, return 2.
-   */
-  def majorVersion(version: String): Int = majorMinorVersion(version)._1
-
-  /**
-   * Given a Kyuubi/Spark/Hive version string, return the minor version number.
-   * E.g., for 2.0.1-SNAPSHOT, return 0.
-   */
-  def minorVersion(version: String): Int = majorMinorVersion(version)._2
 
   /**
    * Given a Kyuubi/Spark/Hive version string, return the short version string.
@@ -150,21 +213,6 @@ object Utils extends Logging {
       case None =>
         throw new IllegalArgumentException(s"Tried to parse '$version' as a project" +
           s" version string, but it could not find the major/minor/maintenance version numbers.")
-    }
-  }
-
-  /**
-   * Given a Kyuubi/Spark/Hive version string,
-   * return the (major version number, minor version number).
-   * E.g., for 2.0.1-SNAPSHOT, return (2, 0).
-   */
-  def majorMinorVersion(version: String): (Int, Int) = {
-    majorMinorRegex.findFirstMatchIn(version) match {
-      case Some(m) =>
-        (m.group(1).toInt, m.group(2).toInt)
-      case None =>
-        throw new IllegalArgumentException(s"Tried to parse '$version' as a project" +
-          s" version string, but it could not find the major and minor version numbers.")
     }
   }
 
@@ -185,6 +233,9 @@ object Utils extends Logging {
   // The value follows org.apache.spark.util.ShutdownHookManager.SPARK_CONTEXT_SHUTDOWN_PRIORITY
   // Hooks need to be invoked before the SparkContext stopped shall use a higher priority.
   val SPARK_CONTEXT_SHUTDOWN_PRIORITY = 50
+  val FLINK_ENGINE_SHUTDOWN_PRIORITY = 50
+  val TRINO_ENGINE_SHUTDOWN_PRIORITY = 50
+  val JDBC_ENGINE_SHUTDOWN_PRIORITY = 50
 
   /**
    * Add some operations that you want into ShutdownHook
@@ -240,4 +291,100 @@ object Utils extends Logging {
     wrt.close()
     stm.toString
   }
+
+  def tryLogNonFatalError(block: => Unit): Unit = {
+    try {
+      block
+    } catch {
+      case NonFatal(t) =>
+        error(s"Uncaught exception in thread ${Thread.currentThread().getName}", t)
+    }
+  }
+
+  def getCodeSourceLocation(clazz: Class[_]): String = {
+    new File(clazz.getProtectionDomain.getCodeSource.getLocation.toURI).getPath
+  }
+
+  def fromCommandLineArgs(args: Array[String], conf: KyuubiConf): Unit = {
+    require(args.length % 2 == 0, s"Illegal size of arguments.")
+    for (i <- args.indices by 2) {
+      require(
+        args(i) == "--conf",
+        s"Unrecognized main arguments prefix ${args(i)}," +
+          s"the argument format is '--conf k=v'.")
+
+      args(i + 1).split("=", 2).map(_.trim) match {
+        case seq if seq.length == 2 => conf.set(seq.head, seq.last)
+        case _ => throw new IllegalArgumentException(s"Illegal argument: ${args(i + 1)}.")
+      }
+    }
+  }
+
+  val REDACTION_REPLACEMENT_TEXT = "*********(redacted)"
+
+  private val PATTERN_FOR_KEY_VALUE_ARG = "(.+?)=(.+)".r
+
+  def redactCommandLineArgs(conf: KyuubiConf, commands: Array[String]): Array[String] = {
+    val redactionPattern = conf.get(SERVER_SECRET_REDACTION_PATTERN)
+    var nextKV = false
+    commands.map {
+      case PATTERN_FOR_KEY_VALUE_ARG(key, value) if nextKV =>
+        val (_, newValue) = redact(redactionPattern, Seq((key, value))).head
+        nextKV = false
+        s"$key=$newValue"
+
+      case cmd if cmd == "--conf" =>
+        nextKV = true
+        cmd
+
+      case cmd =>
+        cmd
+    }
+  }
+
+  /**
+   * Redact the sensitive values in the given map. If a map key matches the redaction pattern then
+   * its value is replaced with a dummy text.
+   */
+  def redact[K, V](regex: Option[Regex], kvs: Seq[(K, V)]): Seq[(K, V)] = {
+    regex match {
+      case None => kvs
+      case Some(r) => redact(r, kvs)
+    }
+  }
+
+  private def redact[K, V](redactionPattern: Regex, kvs: Seq[(K, V)]): Seq[(K, V)] = {
+    kvs.map {
+      case (key: String, value: String) =>
+        redactionPattern.findFirstIn(key)
+          .orElse(redactionPattern.findFirstIn(value))
+          .map { _ => (key, REDACTION_REPLACEMENT_TEXT) }
+          .getOrElse((key, value))
+      case (key, value: String) =>
+        redactionPattern.findFirstIn(value)
+          .map { _ => (key, REDACTION_REPLACEMENT_TEXT) }
+          .getOrElse((key, value))
+      case (key, value) =>
+        (key, value)
+    }.asInstanceOf[Seq[(K, V)]]
+  }
+
+  def isCommandAvailable(cmd: String): Boolean = s"which $cmd".! == 0
+
+  /**
+   * Get the ClassLoader which loaded Kyuubi.
+   */
+  def getKyuubiClassLoader: ClassLoader = getClass.getClassLoader
+
+  /**
+   * Get the Context ClassLoader on this thread or, if not present, the ClassLoader that
+   * loaded Kyuubi.
+   *
+   * This should be used whenever passing a ClassLoader to Class.ForName or finding the currently
+   * active loader when setting up ClassLoader delegation chains.
+   */
+  def getContextOrKyuubiClassLoader: ClassLoader =
+    Option(Thread.currentThread().getContextClassLoader).getOrElse(getKyuubiClassLoader)
+
+  def isOnK8s: Boolean = Files.exists(Paths.get("/var/run/secrets/kubernetes.io"))
 }

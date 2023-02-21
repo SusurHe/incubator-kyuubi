@@ -19,8 +19,9 @@ package org.apache.kyuubi.operation
 
 import org.apache.hadoop.security.UserGroupInformation
 
-import org.apache.kyuubi.WithKyuubiServer
+import org.apache.kyuubi.{Utils, WithKyuubiServer}
 import org.apache.kyuubi.config.KyuubiConf
+import org.apache.kyuubi.session.KyuubiSession
 
 class KyuubiOperationPerGroupSuite extends WithKyuubiServer with SparkQueryTests {
 
@@ -63,9 +64,8 @@ class KyuubiOperationPerGroupSuite extends WithKyuubiServer with SparkQueryTests
     }
     assert(r1 != null && r2 != null)
     assert(r1 === r2)
-    assert(r1.startsWith(s"kyuubi_GROUP_testGG"))
+    assert(r1.startsWith(s"kyuubi_GROUP_${conf.get(KyuubiConf.ENGINE_TYPE)}_testGG"))
   }
-
 
   test("kyuubi defined function - system_user/session_user") {
     withSessionConf(Map("hive.server2.proxy.user" -> "user1"))(Map.empty)(Map.empty) {
@@ -74,6 +74,17 @@ class KyuubiOperationPerGroupSuite extends WithKyuubiServer with SparkQueryTests
         assert(res.next())
         assert(res.getString("c1") === "testGG")
         assert(res.getString("c2") === "user1")
+      }
+    }
+  }
+
+  test("support real user for kyuubi session") {
+    withSessionConf(Map("hive.server2.proxy.user" -> "user1"))(Map.empty)(Map.empty) {
+      withJdbcStatement() { _ =>
+        val session =
+          server.backendService.sessionManager.allSessions().head.asInstanceOf[KyuubiSession]
+        assert(session.realUser === Utils.currentUser)
+        assert(session.user === "user1")
       }
     }
   }

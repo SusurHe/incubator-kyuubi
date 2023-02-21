@@ -18,8 +18,10 @@
 package org.apache.kyuubi.config
 
 import java.time.Duration
+import java.util.regex.PatternSyntaxException
 
 import scala.util.{Failure, Success, Try}
+import scala.util.matching.Regex
 
 private[kyuubi] case class ConfigBuilder(key: String) {
 
@@ -28,9 +30,16 @@ private[kyuubi] case class ConfigBuilder(key: String) {
   private[config] var _onCreate: Option[ConfigEntry[_] => Unit] = None
   private[config] var _type = ""
   private[config] var _internal = false
+  private[config] var _serverOnly = false
+  private[config] var _alternatives = List.empty[String]
 
   def internal: ConfigBuilder = {
     _internal = true
+    this
+  }
+
+  def serverOnly: ConfigBuilder = {
+    _serverOnly = true
     this
   }
 
@@ -46,6 +55,11 @@ private[kyuubi] case class ConfigBuilder(key: String) {
 
   def onCreate(callback: ConfigEntry[_] => Unit): ConfigBuilder = {
     _onCreate = Option(callback)
+    this
+  }
+
+  def withAlternative(key: String): ConfigBuilder = {
+    _alternatives = _alternatives :+ key
     this
   }
 
@@ -75,12 +89,13 @@ private[kyuubi] case class ConfigBuilder(key: String) {
 
   def booleanConf: TypedConfigBuilder[Boolean] = {
     _type = "boolean"
-    def toBoolean(s: String) = try {
-      s.trim.toBoolean
-    } catch {
-      case e: IllegalArgumentException =>
-        throw new IllegalArgumentException(s"$key should be boolean, but was $s", e)
-    }
+    def toBoolean(s: String) =
+      try {
+        s.trim.toBoolean
+      } catch {
+        case e: IllegalArgumentException =>
+          throw new IllegalArgumentException(s"$key should be boolean, but was $s", e)
+      }
     new TypedConfigBuilder(this, toBoolean)
   }
 
@@ -97,10 +112,11 @@ private[kyuubi] case class ConfigBuilder(key: String) {
         .orElse(Try(trimmed.toLong)) match {
         case Success(millis) => millis
         case Failure(e) =>
-          throw new IllegalArgumentException(s"The formats accepted are 1) based on the ISO-8601" +
-            s" duration format `PnDTnHnMn.nS` with days considered to be exactly 24 hours. 2) A" +
-            s" plain long value represents total milliseconds, e.g. 2000 means 2 seconds" +
-            s" $trimmed for $key is not valid", e)
+          throw new IllegalArgumentException(
+            s"The formats accepted are 1) based on the ISO-8601 duration format `PnDTnHnMn.nS`" +
+              s" with days considered to be exactly 24 hours. 2). A plain long value represents" +
+              s" total milliseconds, e.g. 2000 means 2 seconds $trimmed for $key is not valid",
+            e)
       }
     }
 
@@ -113,9 +129,28 @@ private[kyuubi] case class ConfigBuilder(key: String) {
 
   def fallbackConf[T](fallback: ConfigEntry[T]): ConfigEntry[T] = {
     val entry =
-      new ConfigEntryFallback[T](key, _doc, _version, _internal, fallback)
+      new ConfigEntryFallback[T](
+        key,
+        _alternatives,
+        _doc,
+        _version,
+        _internal,
+        _serverOnly,
+        fallback)
     _onCreate.foreach(_(entry))
     entry
+  }
+
+  def regexConf: TypedConfigBuilder[Regex] = {
+    def regexFromString(str: String, key: String): Regex = {
+      try str.r
+      catch {
+        case e: PatternSyntaxException =>
+          throw new IllegalArgumentException(s"$key should be a regex, but was $str", e)
+      }
+    }
+
+    new TypedConfigBuilder(this, regexFromString(_, this.key), _.toString)
   }
 }
 
@@ -134,7 +169,9 @@ private[kyuubi] case class TypedConfigBuilder[T](
   /** Checks if the user-provided value for the config matches the validator. */
   def checkValue(validator: T => Boolean, errMsg: String): TypedConfigBuilder[T] = {
     transform { v =>
-      if (!validator(v)) throw new IllegalArgumentException(errMsg)
+      if (!validator(v)) {
+        throw new IllegalArgumentException(s"'$v' in ${parent.key} is invalid. $errMsg")
+      }
       v
     }
   }
@@ -158,7 +195,15 @@ private[kyuubi] case class TypedConfigBuilder[T](
 
   def createOptional: OptionalConfigEntry[T] = {
     val entry = new OptionalConfigEntry(
-      parent.key, fromStr, toStr, parent._doc, parent._version, parent._type, parent._internal)
+      parent.key,
+      parent._alternatives,
+      fromStr,
+      toStr,
+      parent._doc,
+      parent._version,
+      parent._type,
+      parent._internal,
+      parent._serverOnly)
     parent._onCreate.foreach(_(entry))
     entry
   }
@@ -168,16 +213,32 @@ private[kyuubi] case class TypedConfigBuilder[T](
     case _ =>
       val d = fromStr(toStr(default))
       val entry = new ConfigEntryWithDefault(
-        parent.key, d, fromStr, toStr, parent._doc,
-        parent._version, parent._type, parent._internal)
+        parent.key,
+        parent._alternatives,
+        d,
+        fromStr,
+        toStr,
+        parent._doc,
+        parent._version,
+        parent._type,
+        parent._internal,
+        parent._serverOnly)
       parent._onCreate.foreach(_(entry))
       entry
   }
 
   def createWithDefaultString(default: String): ConfigEntryWithDefaultString[T] = {
     val entry = new ConfigEntryWithDefaultString(
-      parent.key, default, fromStr, toStr, parent._doc,
-      parent._version, parent._type, parent._internal)
+      parent.key,
+      parent._alternatives,
+      default,
+      fromStr,
+      toStr,
+      parent._doc,
+      parent._version,
+      parent._type,
+      parent._internal,
+      parent._serverOnly)
     parent._onCreate.foreach(_(entry))
     entry
   }

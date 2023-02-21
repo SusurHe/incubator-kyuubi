@@ -17,7 +17,7 @@
 
 package org.apache.kyuubi.session
 
-import org.apache.hive.service.rpc.thrift.{TGetInfoType, TGetInfoValue, TProtocolVersion, TRowSet, TTableSchema}
+import org.apache.hive.service.rpc.thrift.{TGetInfoType, TGetInfoValue, TGetResultSetMetadataResp, TProtocolVersion, TRowSet}
 
 import org.apache.kyuubi.operation.FetchOrientation.FetchOrientation
 import org.apache.kyuubi.operation.OperationHandle
@@ -26,6 +26,7 @@ trait Session {
 
   def protocol: TProtocolVersion
   def handle: SessionHandle
+  def name: Option[String]
 
   def conf: Map[String, String]
 
@@ -37,16 +38,20 @@ trait Session {
   def lastAccessTime: Long
   def lastIdleTime: Long
   def getNoOperationTime: Long
+  def sessionIdleTimeoutThreshold: Long
 
   def sessionManager: SessionManager
 
   def open(): Unit
   def close(): Unit
 
-
   def getInfo(infoType: TGetInfoType): TGetInfoValue
 
-  def executeStatement(statement: String, runAsync: Boolean, queryTimeout: Long): OperationHandle
+  def executeStatement(
+      statement: String,
+      confOverlay: Map[String, String],
+      runAsync: Boolean,
+      queryTimeout: Long): OperationHandle
 
   def getTableTypes: OperationHandle
   def getTypeInfo: OperationHandle
@@ -66,15 +71,27 @@ trait Session {
       catalogName: String,
       schemaName: String,
       functionName: String): OperationHandle
+  def getPrimaryKeys(
+      catalogName: String,
+      schemaName: String,
+      tableName: String): OperationHandle
+  def getCrossReference(
+      primaryCatalog: String,
+      primarySchema: String,
+      primaryTable: String,
+      foreignCatalog: String,
+      foreignSchema: String,
+      foreignTable: String): OperationHandle
+  def getQueryId(operationHandle: OperationHandle): String
 
   def cancelOperation(operationHandle: OperationHandle): Unit
   def closeOperation(operationHandle: OperationHandle): Unit
-  def getResultSetMetadata(operationHandle: OperationHandle): TTableSchema
+  def getResultSetMetadata(operationHandle: OperationHandle): TGetResultSetMetadataResp
   def fetchResults(
       operationHandle: OperationHandle,
       orientation: FetchOrientation,
       maxRows: Int,
       fetchLog: Boolean): TRowSet
 
-  def closeExpiredOperations: Unit
+  def closeExpiredOperations(): Unit
 }

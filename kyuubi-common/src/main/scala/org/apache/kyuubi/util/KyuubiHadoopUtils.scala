@@ -18,20 +18,23 @@
 package org.apache.kyuubi.util
 
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, DataOutputStream}
-import java.util.{Map => JMap}
+import java.util.{Base64, Map => JMap}
 
 import scala.collection.JavaConverters._
+import scala.util.{Failure, Success, Try}
 
-import org.apache.commons.codec.binary.Base64
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.security.{Credentials, SecurityUtil, UserGroupInformation}
 import org.apache.hadoop.security.token.{Token, TokenIdentifier}
+import org.apache.hadoop.security.token.delegation.AbstractDelegationTokenIdentifier
+import org.apache.hadoop.yarn.conf.YarnConfiguration
 
+import org.apache.kyuubi.Logging
 import org.apache.kyuubi.config.KyuubiConf
 
-object KyuubiHadoopUtils {
+object KyuubiHadoopUtils extends Logging {
 
   private val subjectField =
     classOf[UserGroupInformation].getDeclaredField("subject")
@@ -41,10 +44,17 @@ object KyuubiHadoopUtils {
     classOf[Credentials].getDeclaredField("tokenMap")
   tokenMapField.setAccessible(true)
 
-  def newHadoopConf(conf: KyuubiConf): Configuration = {
-    val hadoopConf = new Configuration()
-    conf.getAll.foreach { case (k, v) => hadoopConf.set(k, v) }
+  def newHadoopConf(
+      conf: KyuubiConf,
+      loadDefaults: Boolean = true): Configuration = {
+    val hadoopConf = new Configuration(loadDefaults)
+    conf.getAll
+      .foreach { case (k, v) => hadoopConf.set(k, v) }
     hadoopConf
+  }
+
+  def newYarnConfiguration(conf: KyuubiConf): YarnConfiguration = {
+    new YarnConfiguration(newHadoopConf(conf))
   }
 
   def getServerPrincipal(principal: String): String = {
@@ -55,13 +65,11 @@ object KyuubiHadoopUtils {
     val byteStream = new ByteArrayOutputStream
     creds.writeTokenStorageToStream(new DataOutputStream(byteStream))
 
-    val encoder = new Base64(0, null, false)
-    encoder.encodeToString(byteStream.toByteArray)
+    Base64.getMimeEncoder.encodeToString(byteStream.toByteArray)
   }
 
   def decodeCredentials(newValue: String): Credentials = {
-    val decoder = new Base64(0, null, false)
-    val decoded = decoder.decode(newValue)
+    val decoded = Base64.getMimeDecoder.decode(newValue)
 
     val byteStream = new ByteArrayInputStream(decoded)
     val creds = new Credentials()
@@ -80,13 +88,25 @@ object KyuubiHadoopUtils {
       .toMap
   }
 
-  def getTokenIssueDate(token: Token[_ <: TokenIdentifier]): Long = {
-    // It is safe to deserialize any token identifier to hdfs `DelegationTokenIdentifier`
-    // as all token identifiers have the same binary format.
-    val tokenIdentifier = new DelegationTokenIdentifier
-    val buf = new ByteArrayInputStream(token.getIdentifier)
-    val in = new DataInputStream(buf)
-    tokenIdentifier.readFields(in)
-    tokenIdentifier.getIssueDate
+  def getTokenIssueDate(token: Token[_ <: TokenIdentifier]): Option[Long] = {
+    token.decodeIdentifier() match {
+      case tokenIdent: AbstractDelegationTokenIdentifier =>
+        Some(tokenIdent.getIssueDate)
+      case null =>
+        // TokenIdentifiers not found in ServiceLoader
+        val tokenIdentifier = new DelegationTokenIdentifier
+        val buf = new ByteArrayInputStream(token.getIdentifier)
+        val in = new DataInputStream(buf)
+        Try(tokenIdentifier.readFields(in)) match {
+          case Success(_) =>
+            Some(tokenIdentifier.getIssueDate)
+          case Failure(e) =>
+            warn(s"Can not decode identifier of token $token", e)
+            None
+        }
+      case tokenIdent =>
+        debug(s"Unsupported TokenIdentifier kind: ${tokenIdent.getKind}")
+        None
+    }
   }
 }

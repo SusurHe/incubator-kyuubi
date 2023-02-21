@@ -25,11 +25,13 @@ class ConfigEntrySuite extends KyuubiFunSuite {
     val doc = "this is dummy documentation"
     val e1 = new OptionalConfigEntry[Int](
       "kyuubi.int.spark",
+      List.empty[String],
       s => s.toInt + 1,
       v => (v - 1).toString,
       doc,
       "<none>",
       "int",
+      false,
       false)
 
     assert(e1.key === "kyuubi.int.spark")
@@ -44,15 +46,18 @@ class ConfigEntrySuite extends KyuubiFunSuite {
     assert(e1.toString === s"ConfigEntry(key=kyuubi.int.spark, defaultValue=<undefined>," +
       s" doc=$doc, version=<none>, type=int)")
 
+    KyuubiConf.register(e1)
     val conf = KyuubiConf()
     assert(conf.get(e1).isEmpty)
     val e = intercept[IllegalArgumentException](new OptionalConfigEntry[Int](
       "kyuubi.int.spark",
+      List.empty[String],
       s => s.toInt + 1,
       v => (v - 1).toString,
       "this is dummy documentation",
       "<none>",
       "int",
+      false,
       false))
     assert(e.getMessage ===
       "requirement failed: Config entry kyuubi.int.spark already registered!")
@@ -62,13 +67,16 @@ class ConfigEntrySuite extends KyuubiFunSuite {
   }
 
   test("config entry with default") {
-    val e1 = new ConfigEntryWithDefault[Long]("kyuubi.long.spark",
+    val e1 = new ConfigEntryWithDefault[Long](
+      "kyuubi.long.spark",
+      List.empty[String],
       2,
       s => s.toLong + 1,
       v => (v - 1).toString,
-    "doc",
-    "0.11.1",
+      "doc",
+      "0.11.1",
       "long",
+      false,
       false)
 
     assert(e1.key === "kyuubi.long.spark")
@@ -83,6 +91,7 @@ class ConfigEntrySuite extends KyuubiFunSuite {
     assert(e1.toString === s"ConfigEntry(key=kyuubi.long.spark, defaultValue=1," +
       s" doc=doc, version=0.11.1, type=long)")
 
+    KyuubiConf.register(e1)
     val conf = KyuubiConf()
     assert(conf.get(e1) === 2)
     conf.set(e1.key, "5")
@@ -92,12 +101,14 @@ class ConfigEntrySuite extends KyuubiFunSuite {
   test("config entry with default string") {
     val e1 = new ConfigEntryWithDefaultString[Double](
       "kyuubi.double.spark",
+      List.empty[String],
       "3.0",
       s => java.lang.Double.valueOf(s),
       v => v.toString,
       "doc",
       "",
       "double",
+      false,
       false)
 
     assert(e1.key === "kyuubi.double.spark")
@@ -112,6 +123,7 @@ class ConfigEntrySuite extends KyuubiFunSuite {
     assert(e1.toString === s"ConfigEntry(key=kyuubi.double.spark, defaultValue=3.0," +
       s" doc=doc, version=, type=double)")
 
+    KyuubiConf.register(e1)
     val conf = KyuubiConf()
     assert(conf.get(e1) === 3.0)
     conf.set(e1.asInstanceOf[ConfigEntry[AnyVal]], 5.0)
@@ -119,11 +131,18 @@ class ConfigEntrySuite extends KyuubiFunSuite {
   }
 
   test("fallback config entry") {
-    val origin = KyuubiConf.buildConf("origin.spark")
+    val origin = KyuubiConf.buildConf("kyuubi.origin.spark")
       .version("1.1.1")
       .stringConf.createWithDefault("origin")
     val fallback =
-      new ConfigEntryFallback[String]("kyuubi.fallback.spark", "fallback", "1.2.0", false, origin)
+      new ConfigEntryFallback[String](
+        "kyuubi.fallback.spark",
+        List.empty[String],
+        "fallback",
+        "1.2.0",
+        false,
+        false,
+        origin)
 
     assert(fallback.key === "kyuubi.fallback.spark")
     assert(fallback.valueConverter("2") === "2")
@@ -137,9 +156,60 @@ class ConfigEntrySuite extends KyuubiFunSuite {
     assert(fallback.toString === s"ConfigEntry(key=kyuubi.fallback.spark, defaultValue=origin," +
       s" doc=fallback, version=1.2.0, type=string)")
 
+    KyuubiConf.register(fallback)
     val conf = KyuubiConf()
     assert(conf.get(fallback) === "origin")
     conf.set(origin.key, "new value")
     assert(conf.get(fallback) === "new value", "fallback to new original key")
+  }
+
+  test("An unregistered config should not be get") {
+    val config = new ConfigEntryWithDefaultString[Double](
+      "kyuubi.unregistered.spark",
+      List.empty[String],
+      "3.0",
+      s => java.lang.Double.valueOf(s),
+      v => v.toString,
+      "doc",
+      "",
+      "double",
+      false,
+      false)
+
+    val conf = KyuubiConf()
+    KyuubiConf.register(config)
+    assert(conf.get(config) == 3.0)
+
+    KyuubiConf.unregister(config)
+
+    val exception = intercept[IllegalArgumentException](conf.get(config))
+    assert(exception.getMessage.contains("requirement failed: " +
+      "ConfigEntry(key=kyuubi.unregistered.spark, defaultValue=3.0, " +
+      "doc=doc, version=, type=double) is not registered"))
+  }
+
+  test("support alternative keys in ConfigBuilder") {
+    val config = new ConfigEntryWithDefaultString[Double](
+      "kyuubi.key",
+      List("kyuubi.key.alternative", "kyuubi.key.alternative2"),
+      "3.0",
+      s => java.lang.Double.valueOf(s),
+      v => v.toString,
+      "doc",
+      "",
+      "double",
+      false,
+      false)
+
+    val conf = KyuubiConf()
+    KyuubiConf.register(config)
+    assert(conf.get(config) == 3.0)
+    conf.set("kyuubi.key.alternative", "4.0")
+    conf.set("kyuubi.key.alternative2", "5.0")
+    assert(conf.get(config) == 4.0)
+    conf.unset("kyuubi.key.alternative")
+    assert(conf.get(config) == 5.0)
+    conf.unset("kyuubi.key.alternative2")
+    assert(conf.get(config) == 3.0)
   }
 }

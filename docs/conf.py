@@ -32,47 +32,39 @@
 import os
 import sys
 import shlex
+import subprocess
+import datetime
 
 sys.path.insert(0, os.path.abspath('.'))
-
-import sphinx_rtd_theme
-html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 
 import sphinx_markdown_tables
 import recommonmark
 from recommonmark.transform import AutoStructify
 from recommonmark.parser import CommonMarkParser
-# source_parsers = {
-#     '.md': CommonMarkParser,
-# }
 
-source_suffix = ['.rst', '.md']
+source_suffix = {
+    '.rst': 'restructuredtext',
+    '.txt': 'restructuredtext',
+    '.md': 'markdown',
+}
+
+source_parsers = {
+    '.md': CommonMarkParser,
+}
 
 # -- Project information -----------------------------------------------------
 
 project = 'Kyuubi'
 
-copyright = '''
-Licensed to the Apache Software Foundation (ASF) under one or more
-contributor license agreements.  See the NOTICE file distributed with
-this work for additional information regarding copyright ownership.
-The ASF licenses this file to You under the Apache License, Version 2.0
-(the "License"); you may not use this file except in compliance with
-the License.  You may obtain a copy of the License at
+year = datetime.datetime.now().strftime("%Y")
 
-   http://www.apache.org/licenses/LICENSE-2.0
+copyright = year + ' The Apache Software Foundation, Licensed under the Apache License, Version 2.0'
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-'''
 
-author = 'Kent Yao'
+author = 'Apache Kyuubi Community'
 
 # The full version, including alpha/beta/rc tags
-release = '1.3.0'
+release = subprocess.getoutput("cd .. && build/mvn help:evaluate -Dexpression=project.version|grep -v Using|grep -v INFO|grep -v WARNING|tail -n 1").split('\n')[-1]
 
 
 # -- General configuration ---------------------------------------------------
@@ -86,6 +78,7 @@ extensions = [
     'sphinx.ext.mathjax',
     'recommonmark',
     'sphinx_markdown_tables',
+    'sphinx_togglebutton',
     'notfound.extension',
 ]
 
@@ -104,13 +97,27 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'sphinx_rtd_theme'
-# html_theme_options = {
-#     'logo_only': True
-# }
+html_theme = 'sphinx_book_theme'
+html_theme_options = {
+    "repository_url": "https://github.com/apache/kyuubi",
+    "use_repository_button": True,
+    "use_edit_page_button": True,
+    "use_download_button": True,
+    "use_fullscreen_button": True,
+    "repository_branch": "master",
+    "path_to_docs": "docs",
+    "logo_only": True,
+    "home_page_in_toc": False,
+    "show_navbar_depth": 1,
+    "show_toc_level": 2,
+    "announcement": "&#129418; Welcome to Kyuubi’s online documentation &#x2728;, v" + release,
+    "toc_title": "",
+    "extra_navbar": "Version " + release,
+}
 
-html_logo = 'imgs/kyuubi_logo_gray.png'
-
+html_logo = 'imgs/logo.png'
+html_favicon = 'imgs/logo_red_short.png'
+html_title = 'Apache Kyuubi'
 
 pygments_style = 'sphinx'
 
@@ -118,9 +125,10 @@ pygments_style = 'sphinx'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+html_css_files = ["css/custom.css"]
 htmlhelp_basename = 'Recommonmarkdoc'
 
-github_doc_root = 'https://github.com/apache/incubator-kyuubi/tree/master/docs/'
+github_doc_root = 'https://github.com/apache/kyuubi/tree/master/docs/'
 def setup(app):
     app.add_config_value('recommonmark_config', {
         'url_resolver': lambda url: github_doc_root + url,

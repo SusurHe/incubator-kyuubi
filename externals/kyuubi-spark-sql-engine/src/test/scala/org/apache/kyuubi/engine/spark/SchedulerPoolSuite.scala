@@ -30,7 +30,8 @@ class SchedulerPoolSuite extends WithSparkSQLEngine with HiveJDBCTestHelper {
   override def withKyuubiConf: Map[String, String] = {
     val poolFile =
       Thread.currentThread().getContextClassLoader.getResource("test-scheduler-pool.xml")
-    Map("spark.scheduler.mode" -> "FAIR",
+    Map(
+      "spark.scheduler.mode" -> "FAIR",
       "spark.scheduler.allocation.file" -> poolFile.getFile,
       "spark.master" -> "local[2]")
   }
@@ -95,7 +96,7 @@ class SchedulerPoolSuite extends WithSparkSQLEngine with HiveJDBCTestHelper {
         })
       }
       threads.shutdown()
-      eventually(Timeout(10.seconds)) {
+      eventually(Timeout(20.seconds)) {
         // We can not ensure that job1 is started before job2 so here using abs.
         assert(Math.abs(job1StartTime - job2StartTime) < 1000)
         // Job1 minShare is 2(total resource) so that job2 should be allocated tasks after

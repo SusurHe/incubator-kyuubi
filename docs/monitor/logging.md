@@ -1,29 +1,23 @@
 <!--
- - Licensed to the Apache Software Foundation (ASF) under one or more
- - contributor license agreements.  See the NOTICE file distributed with
- - this work for additional information regarding copyright ownership.
- - The ASF licenses this file to You under the Apache License, Version 2.0
- - (the "License"); you may not use this file except in compliance with
- - the License.  You may obtain a copy of the License at
- -
- -   http://www.apache.org/licenses/LICENSE-2.0
- -
- - Unless required by applicable law or agreed to in writing, software
- - distributed under the License is distributed on an "AS IS" BASIS,
- - WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- - See the License for the specific language governing permissions and
- - limitations under the License.
- -->
-
-<div align=center>
-
-![](../imgs/kyuubi_logo.png)
-
-</div>
+- Licensed to the Apache Software Foundation (ASF) under one or more
+- contributor license agreements.  See the NOTICE file distributed with
+- this work for additional information regarding copyright ownership.
+- The ASF licenses this file to You under the Apache License, Version 2.0
+- (the "License"); you may not use this file except in compliance with
+- the License.  You may obtain a copy of the License at
+-
+-   http://www.apache.org/licenses/LICENSE-2.0
+-
+- Unless required by applicable law or agreed to in writing, software
+- distributed under the License is distributed on an "AS IS" BASIS,
+- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- See the License for the specific language governing permissions and
+- limitations under the License.
+-->
 
 # Monitoring Kyuubi - Logging System
 
-Kyuubi uses [Apache Log4j](https://logging.apache.org/) for logging.
+Kyuubi uses [Apache Log4j2](https://logging.apache.org/log4j/2.x/) for logging since version v1.5.0. For versions v1.4.1 and below, it uses [Apache Log4j](https://logging.apache.org).
 
 In general, there are mainly three components in the Kyuubi architecture that will produce component-oriented logs to help you trace breadcrumbs for SQL workloads against Kyuubi.
 
@@ -43,14 +37,14 @@ Logs of Kyuubi Server show us the activities of the server instance including ho
 
 #### Basic Configurations
 
-You can configure it by adding a `log4j.properties` file in the `$KYUUBI_HOME/conf` directory.
-One way to start is to make a copy of the existing `log4j.properties.template` located there.
+You can configure it by adding a `log4j2.xml` file in the `$KYUUBI_HOME/conf` directory.
+One way to start is to make a copy of the existing `log4j2.xml.template` located there.
 
 For example,
 
 ```shell
 # cd $KYUUBI_HOME
-cp conf/log4j.properties.template conf/log4j.properties
+cp conf/log4j2.xml.template conf/log4j2.xml
 ```
 
 With or without the above step, by default the server logging will redirect the logs to a file named `kyuubi-${env:USER}-org.apache.kyuubi.server.KyuubiServer-${env:HOSTNAME}.out` under the directory of `$KYUUBI_HOME/logs`.
@@ -75,6 +69,7 @@ KYUUBI_WORK_DIR_ROOT: /Users/kentyao/svn-kyuubi/v1.3.1-incubating-rc0/apache-kyu
 SPARK_HOME: /Users/kentyao/Downloads/spark/spark-3.2.0-bin-hadoop3.2
 SPARK_CONF_DIR: /Users/kentyao/Downloads/spark/spark-3.2.0-bin-hadoop3.2/conf
 HADOOP_CONF_DIR:
+YARN_CONF_DIR:
 Starting org.apache.kyuubi.server.KyuubiServer, logging to /Users/kentyao/svn-kyuubi/v1.3.1-incubating-rc0/apache-kyuubi-1.3.1-incubating-bin/logs/kyuubi-kentyao-org.apache.kyuubi.server.KyuubiServer-hulk.local.out
 Welcome to
   __  __                           __
@@ -109,20 +104,28 @@ Starting org.apache.kyuubi.server.KyuubiServer, logging to /Users/kentyao/tmp/ky
 
 `KYUUBI_MAX_LOG_FILES` controls how many log files will be remained after a Kyuubi server reboots.
 
-#### Custom Log4j Settings
+#### Custom Log4j2 Settings
 
-Taking control of `$KYUUBI_HOME/conf/log4j.properties` will also give us the ability of customizing server logging as we want.
+Taking control of `$KYUUBI_HOME/conf/log4j2.xml` will also give us the ability of customizing server logging as we want.
 
 For example, we can disable the console appender and enable the file appender like,
 
-```properties
-log4j.rootCategory=INFO, FA
-log4j.appender.FA=org.apache.log4j.FileAppender
-log4j.appender.FA.append=false
-log4j.appender.FA.file=log/dummy.log
-log4j.appender.FA.layout=org.apache.log4j.PatternLayout
-log4j.appender.FA.layout.ConversionPattern=%d{HH:mm:ss.SSS} %t %p %c{2}: %m%n
-log4j.appender.FA.Threshold=DEBUG
+```xml
+<Configuration status="INFO">
+  <Appenders>
+    <File name="fa" fileName="log/dummy.log">
+      <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %p %c: %m%n"/>
+      <Filters>
+        <RegexFilter regex=".*Thrift error occurred during processing of message.*" onMatch="DENY" onMismatch="NEUTRAL"/>
+      </Filters>
+    </File>
+  </Appenders>
+  <Loggers>
+    <Root level="INFO">
+      <AppenderRef ref="fa"/>
+    </Root>
+  </Loggers>
+</Configuration>
 ```
 
 Then everything goes to `log/dummy.log`.
@@ -147,13 +150,33 @@ Different session users have different folders to group all live and historical 
 Each engine will have one and only engine log.
 When using `cluster` deploy mode, the local engine logs only contain very little information, the main parts of engine logs are on the remote driver side, e.g. for YARN cluster, they are in ApplicationMasters' log.
 
+## Logs of Flink SQL Engine
+
+Flink SQL Engine is one type of Kyuubi Engines and also a typical Flink application.
+Thus, its logs mainly contain the logs of a Flink JobManager and TaskManager.
+Meanwhile, it also includes how all the services of an engine start/stop, how does it response the incoming calls from Kyuubi servers, etc.
+
+In general, when an exception occurs, we are able to find more information and clues in the engine's logs.
+
+#### Configuring Engine Logging
+
+Please refer to Apache Flink online documentation -[Configuring Logging](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/advanced/logging) for instructions.
+
+#### Where to Find the Engine Log
+
+The engine logs locate differently based on the deploy mode and the cluster manager.
+When using local backend or `client` deploy mode for other cluster managers, such as YARN, you can find the whole engine log in `$KYUUBI_WORK_DIR_ROOT/${session username}/kyuubi-flink-sql-engine.log.${num}`.
+Different session users have different folders to group all live and historical engine logs.
+Each engine will have one and only engine log.
+When using `cluster` deploy mode, the local engine logs only contain very little information, the main parts of engine logs are on the remote driver side, e.g. for YARN cluster, they are in ApplicationMasters' log.
+
 ## Operation Logs
 
 Operation log will show how SQL queries are executed, such as query planning, execution, and statistic reports.
 
 Operation logs can reveal directly to end-users how their queries are being executed on the server/engine-side, including some process-oriented information, and why their queries are slow or in error.
 
-For example, when you, as a end-user, use `beeline` to connect a Kyuubi server and execute query like below.
+For example, when you, as an end-user, use `beeline` to connect a Kyuubi server and execute query like below.
 
 ```shell
 bin/beeline -u 'jdbc:hive2://10.242.189.214:2181/;serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=kyuubi' -n kent -e 'select * from src;'
@@ -235,10 +258,12 @@ You will both get the final results and the corresponding operation logs telling
 +-------------------------------------------------+--------------------+
 1 row selected (0.341 seconds)
 ```
+
 ## Further Readings
 
 - [Monitoring Kyuubi - Events System](events.md)
 - [Monitoring Kyuubi - Server Metrics](metrics.md)
 - [Trouble Shooting](trouble_shooting.md)
 - Spark Online Documentation
-    - [Monitoring and Instrumentation](http://spark.apache.org/docs/latest/monitoring.html)
+  - [Monitoring and Instrumentation](https://spark.apache.org/docs/latest/monitoring.html)
+

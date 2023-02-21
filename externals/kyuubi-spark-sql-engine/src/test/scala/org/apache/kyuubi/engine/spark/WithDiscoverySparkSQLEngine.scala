@@ -17,38 +17,16 @@
 
 package org.apache.kyuubi.engine.spark
 
-import org.apache.curator.framework.CuratorFramework
-
-import org.apache.kyuubi.Utils
-import org.apache.kyuubi.config.KyuubiConf
-import org.apache.kyuubi.ha.HighAvailabilityConf.{HA_ZK_AUTH_TYPE, HA_ZK_NAMESPACE, HA_ZK_QUORUM}
-import org.apache.kyuubi.ha.client.{ZooKeeperAuthTypes, ZooKeeperClientProvider}
-import org.apache.kyuubi.zookeeper.{EmbeddedZookeeper, ZookeeperConf}
+import org.apache.kyuubi.ha.HighAvailabilityConf.HA_NAMESPACE
+import org.apache.kyuubi.ha.client.DiscoveryClient
+import org.apache.kyuubi.ha.client.DiscoveryClientProvider
 
 trait WithDiscoverySparkSQLEngine extends WithSparkSQLEngine {
-  private var zkServer: EmbeddedZookeeper = _
+
   def namespace: String
+
   override def withKyuubiConf: Map[String, String] = {
-    assert(zkServer != null)
-    Map(HA_ZK_QUORUM.key -> zkServer.getConnectString,
-      HA_ZK_AUTH_TYPE.key -> ZooKeeperAuthTypes.NONE.toString,
-      HA_ZK_NAMESPACE.key -> namespace)
-  }
-
-  override def beforeAll(): Unit = {
-    zkServer = new EmbeddedZookeeper()
-    val zkData = Utils.createTempDir()
-    val tmpConf = KyuubiConf()
-    tmpConf.set(ZookeeperConf.ZK_CLIENT_PORT, 0)
-    tmpConf.set(ZookeeperConf.ZK_DATA_DIR, zkData.toString)
-    zkServer.initialize(tmpConf)
-    zkServer.start()
-  }
-
-  override def afterAll(): Unit = {
-    if (zkServer != null) {
-      zkServer.stop()
-    }
+    Map(HA_NAMESPACE.key -> namespace)
   }
 
   override protected def beforeEach(): Unit = {
@@ -61,15 +39,7 @@ trait WithDiscoverySparkSQLEngine extends WithSparkSQLEngine {
     stopSparkEngine()
   }
 
-  def withZkClient(f: CuratorFramework => Unit): Unit = {
-    ZooKeeperClientProvider.withZkClient(kyuubiConf)(f)
-  }
-
-  protected def getDiscoveryConnectionString: String = {
-    if (zkServer == null) {
-      ""
-    } else {
-      zkServer.getConnectString
-    }
+  def withDiscoveryClient(f: DiscoveryClient => Unit): Unit = {
+    DiscoveryClientProvider.withDiscoveryClient(kyuubiConf)(f)
   }
 }

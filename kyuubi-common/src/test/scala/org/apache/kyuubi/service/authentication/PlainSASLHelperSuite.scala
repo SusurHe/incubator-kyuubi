@@ -21,18 +21,19 @@ import java.security.Security
 
 import org.apache.thrift.transport.{TSaslServerTransport, TSocket}
 
-import org.apache.kyuubi.{KYUUBI_VERSION, KyuubiFunSuite, Utils}
+import org.apache.kyuubi.{KYUUBI_VERSION, KyuubiFunSuite}
 import org.apache.kyuubi.config.KyuubiConf
-import org.apache.kyuubi.service.{NoopServer, ThriftBinaryFrontendService}
+import org.apache.kyuubi.engine.SemanticVersion
+import org.apache.kyuubi.service.{NoopTBinaryFrontendServer, TBinaryFrontendService}
 import org.apache.kyuubi.service.authentication.PlainSASLServer.SaslPlainProvider
 
 class PlainSASLHelperSuite extends KyuubiFunSuite {
 
   test("PlainSASLHelper") {
-    val server = new NoopServer()
+    val server = new NoopTBinaryFrontendServer()
     val conf = KyuubiConf().set(KyuubiConf.FRONTEND_THRIFT_BINARY_BIND_PORT, 0)
     server.initialize(conf)
-    val service = server.frontendServices.head.asInstanceOf[ThriftBinaryFrontendService]
+    val service = server.frontendServices.head.asInstanceOf[TBinaryFrontendService]
     val tProcessorFactory = PlainSASLHelper.getProcessFactory(service)
     val tSocket = new TSocket("0.0.0.0", 0)
 
@@ -62,8 +63,8 @@ class PlainSASLHelperSuite extends KyuubiFunSuite {
     assert(saslPlainProvider.containsKey("SaslServerFactory.PLAIN"))
     assert(saslPlainProvider.getName === "KyuubiSaslPlain")
     val version: Double = {
-      val (major, minor) = Utils.majorMinorVersion(KYUUBI_VERSION)
-      major + minor.toDouble / 10
+      val ver = SemanticVersion(KYUUBI_VERSION)
+      ver.majorVersion + ver.minorVersion.toDouble / 10
     }
     assert(saslPlainProvider.getVersion === version)
   }

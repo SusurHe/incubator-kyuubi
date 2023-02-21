@@ -1,34 +1,57 @@
 <!--
- - Licensed to the Apache Software Foundation (ASF) under one or more
- - contributor license agreements.  See the NOTICE file distributed with
- - this work for additional information regarding copyright ownership.
- - The ASF licenses this file to You under the Apache License, Version 2.0
- - (the "License"); you may not use this file except in compliance with
- - the License.  You may obtain a copy of the License at
- -
- -   http://www.apache.org/licenses/LICENSE-2.0
- -
- - Unless required by applicable law or agreed to in writing, software
- - distributed under the License is distributed on an "AS IS" BASIS,
- - WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- - See the License for the specific language governing permissions and
- - limitations under the License.
- -->
+- Licensed to the Apache Software Foundation (ASF) under one or more
+- contributor license agreements.  See the NOTICE file distributed with
+- this work for additional information regarding copyright ownership.
+- The ASF licenses this file to You under the Apache License, Version 2.0
+- (the "License"); you may not use this file except in compliance with
+- the License.  You may obtain a copy of the License at
+-
+-   http://www.apache.org/licenses/LICENSE-2.0
+-
+- Unless required by applicable law or agreed to in writing, software
+- distributed under the License is distributed on an "AS IS" BASIS,
+- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- See the License for the specific language governing permissions and
+- limitations under the License.
+-->
 
-![](docs/imgs/kyuubi_logo.png)
+<p align="center">
+  <img src="https://svn.apache.org/repos/asf/comdev/project-logos/originals/kyuubi-1.svg" alt="Kyuubi logo" height="120px"/>
+</p>
 
-[![License](https://img.shields.io/badge/license-Apache%202-4EB1BA.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
-[![](https://tokei.rs/b1/github.com/apache/incubator-kyuubi)](https://github.com/apache/incubator-kyuubi)
-![GitHub top language](https://img.shields.io/github/languages/top/apache/incubator-kyuubi)
-[![Latest tag](https://img.shields.io/github/v/tag/apache/incubator-kyuubi?label=tag)](https://github.com/apache/incubator-kyuubi/tags)
-[![codecov](https://codecov.io/gh/apache/incubator-kyuubi/branch/master/graph/badge.svg)](https://codecov.io/gh/apache/incubator-kyuubi)
-[![Travis](https://api.travis-ci.com/apache/incubator-kyuubi.svg?branch=master)](https://travis-ci.com/apache/incubator-kyuubi)
-![GitHub Workflow Status](https://img.shields.io/github/workflow/status/apache/incubator-kyuubi/Kyuubi/master?style=plastic)
-[![Documentation Status](https://readthedocs.org/projects/kyuubi/badge/?version=latest)](https://kyuubi.apache.org/docs/latest/)
+<p align="center">
+  <a href="https://kyuubi.apache.org/releases.html">
+    <img src="https://img.shields.io/github/v/release/apache/kyuubi" />
+  </a>
+  <a href="https://github.com/apache/kyuubi/pulls">
+    <img src="https://img.shields.io/github/issues-pr-closed/apache/kyuubi" />
+  </a>
+  <a href="https://github.com/apache/kyuubi/pulse">
+    <img src="https://img.shields.io/tokei/lines/github/apache/kyuubi" />
+  </a>
+  <a href="https://github.com/apache/kyuubi/graphs/contributors">
+    <img src="https://img.shields.io/github/contributors/apache/kyuubi" />
+  </a>
+  <a class="github-button" href="https://github.com/apache/kyuubi" data-icon="octicon-star" aria-label="Star apache/kyuubi on GitHub">
+    <img src="https://img.shields.io/github/stars/apache/kyuubi?style=social" />
+  </a>
+</p>
+<p align="center">
+        <a href="https://kyuubi.apache.org/">Project</a>
+        -
+        <a href="https://kyuubi.readthedocs.io/">Documentation</a>
+        -
+        <a href="https://kyuubi.apache.org/powered_by.html">Who's using</a>
+</p>
+
+# Apache Kyuubi
+
+Apache Kyuubi™ is a distributed and multi-tenant gateway to provide serverless
+SQL on data warehouses and lakehouses.
+
+<https://kyuubi.apache.org/>
 
 ## What is Kyuubi?
-
-Kyuubi is a distributed multi-tenant Thrift JDBC/ODBC server for large-scale data management, processing, and analytics, built on top of Apache Spark and designed to support more engines (i.e., Flink). It has been open-sourced by NetEase since 2018. We are aiming to make Kyuubi an "out-of-the-box" tool for data warehouses and data lakes.
 
 Kyuubi provides a pure SQL gateway through Thrift JDBC/ODBC interface for end-users to manipulate large-scale data with pre-programmed and extensible Spark SQL engines. This "out-of-the-box" model minimizes the barriers and costs for end-users to use Spark at the client side. At the server-side, Kyuubi server and engines' multi-tenant architecture provides the administrators a way to achieve computing resource isolation, data security, high availability, high client concurrency, etc.
 
@@ -38,11 +61,9 @@ Kyuubi provides a pure SQL gateway through Thrift JDBC/ODBC interface for end-us
 - [x] Multi-tenant Spark Support
 - [x] Running Spark in a serverless way
 
-
 ### Target Users
 
 Kyuubi's goal is to make it easy and efficient for `anyone` to use Spark(maybe other engines soon) and facilitate users to handle big data like ordinary data. Here, `anyone` means that users do not need to have a Spark technical background but a human language, SQL only. Sometimes, SQL skills are unnecessary when integrating Kyuubi with Apache Superset, which supports rich visualizations and dashboards.
-
 
 In typical big data production environments with Kyuubi, there should be system administrators and end-users.
 
@@ -50,7 +71,6 @@ In typical big data production environments with Kyuubi, there should be system 
 - End-users: Focus on business data of their own, not where it stores, how it computes.
 
 Additionally, the Kyuubi community will continuously optimize the whole system with various features, such as History-Based Optimizer, Auto-tuning, Materialized View, SQL Dialects, Functions, e.t.c.
-
 
 ### Usage scenarios
 
@@ -60,10 +80,9 @@ In typical big data production environments, especially secured ones, all bundle
 
 Apache Spark is a unified analytics engine for large-scale data processing. It provides a Distributed SQL Engine, a.k.a, the Spark Thrift Server(STS), designed to be seamlessly compatible with HiveServer2 and get even better performance.
 
-HiveServer2 can identify and authenticate a caller, and then if the caller also has permissions for the YARN queue and HDFS files, it succeeds. Otherwise, it fails. However, on the one hand, STS is a single Spark application. The user and queue to which STS belongs are uniquely determined at startup. Consequently, STS cannot leverage cluster managers such as YARN and Kubernetes for resource isolation and sharing or control the access for callers by the single user inside the whole system. On the other hand, the Thrift Server is coupled in the Spark driver's JVM process. This coupled architect puts a high risk on server stability and makes it unable to handle high client concurrency or apply high availability such as load balancing as it is stateful.
+HiveServer2 can identify and authenticate a caller, and then if the caller also has permissions for the YARN queue and HDFS files, it succeeds. Otherwise, it fails. However, on the one hand, STS is a single Spark application. The user and queue to which STS belongs are uniquely determined at startup. Consequently, STS cannot leverage cluster managers such as YARN and Kubernetes for resource isolation and sharing or control the access for callers by the single user inside the whole system. On the other hand, the Thrift Server is coupled in the Spark driver's JVM process. This coupled architecture puts a high risk on server stability and makes it unable to handle high client concurrency or apply high availability such as load balancing as it is stateful.
 
 Kyuubi extends the use of STS in a multi-tenant model based on a unified interface and relies on the concept of multi-tenancy to interact with cluster managers to finally gain the ability of resources sharing/isolation and data security. The loosely coupled architecture of the Kyuubi server and engine dramatically improves the client concurrency and service stability of the service itself.
-
 
 #### DataLake/LakeHouse Support
 
@@ -73,53 +92,34 @@ The vision of Kyuubi is to unify the portal and become an easy-to-use data lake 
 - Multiple Catalogs support
 - SQL Standard Authorization support for DataLake(coming)
 
-
 #### Cloud Native Support
 
 Kyuubi can deploy its engines on different kinds of Cluster Managers, such as, Hadoop YARN, Kubernetes, etc.
 
-
 ![](./docs/imgs/kyuubi_migrating_yarn_to_k8s.png)
-
 
 ### The Kyuubi Ecosystem(present and future)
 
+The figure below shows our vision for the Kyuubi Ecosystem. Some of them have been realized, some in development,
+and others would not be possible without your help.
 
-The figure below shows our vision for the Kyuubi Ecosystem. Some of them have been realized, some in development, and others would not be possible without your help.
-
-![](./docs/imgs/kyuubi_ecosystem.png)
-
-
+![](./docs/imgs/kyuubi_ecosystem.drawio.png)
 
 ## Online Documentation
 
-Since Kyuubi 1.3.0-incubating, the Kyuubi online documentation is hosted by [https://kyuubi.apache.org/](https://kyuubi.apache.org/docs/latest/).
-You can find the specific version of Kyuubi documentation as listed below.
-
-- [1.3.0-incubating](https://kyuubi.apache.org/docs/r1.3.0-incubating/)
-- [stable](https://kyuubi.apache.org/docs/stable/)
-
-For 1.2 and earlier versions, please check the [Github Pages](https://kyuubi.readthedocs.io/en/v1.2.0/) directly.
+Since Kyuubi 1.3.0-incubating, the Kyuubi online documentation is hosted by [https://kyuubi.apache.org/](https://kyuubi.apache.org/).
+You can find the latest Kyuubi documentation on [this web page](https://kyuubi.readthedocs.io/en/master/).
+For 1.2 and earlier versions, please check the [Readthedocs](https://kyuubi.readthedocs.io/en/v1.2.0/) directly.
 
 ## Quick Start
 
-Ready? [Getting Started](https://kyuubi.apache.org/docs/latest/quick_start/quick_start.html) with Kyuubi.
+Ready? [Getting Started](https://kyuubi.readthedocs.io/en/master/quick_start/) with Kyuubi.
 
-## Contributing
+## [Contributing](./CONTRIBUTING.md)
 
-All bits of help are welcome. You can make various types of contributions to Kyuubi, including the following but not limited to,
+## Contributor over time
 
-- Help new users in chat channel or share your success stories with us - [![Gitter](https://badges.gitter.im/kyuubi-on-spark/Lobby.svg)](https://gitter.im/kyuubi-on-spark/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
-- Improve Documentation - [![Documentation Status](https://readthedocs.org/projects/kyuubi/badge/?version=latest)](https://kyuubi.apache.org/docs/latest/)
-- Test releases - [![Latest tag](https://img.shields.io/github/v/tag/apache/incubator-kyuubi?label=tag)](https://github.com/apache/incubator-kyuubi/tags)
-- Improve test coverage - [![codecov](https://codecov.io/gh/apache/incubator-kyuubi/branch/master/graph/badge.svg)](https://codecov.io/gh/apache/incubator-kyuubi)
-- Report bugs and better help developers to reproduce
-- Review changes
-- Make a pull request
-- Promote to others
-- Click the star button if you like this project
-
-Before you start, we recommend that you check the [Contribution Guidelines](https://kyuubi.apache.org/docs/latest/community/contributions.html) first.
+[![Contributor over time](https://contributor-graph-api.apiseven.com/contributors-svg?chart=contributorOverTime&repo=apache/kyuubi)](https://api7.ai/contributor-graph?chart=contributorOverTime&repo=apache/kyuubi)
 
 ## Aside
 

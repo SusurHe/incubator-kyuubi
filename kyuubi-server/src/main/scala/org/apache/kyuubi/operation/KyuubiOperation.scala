@@ -26,18 +26,25 @@ import org.apache.thrift.TException
 import org.apache.thrift.transport.TTransportException
 
 import org.apache.kyuubi.{KyuubiSQLException, Utils}
-import org.apache.kyuubi.client.KyuubiSyncThriftClient
-import org.apache.kyuubi.metrics.MetricsConstants.STATEMENT_FAIL
+import org.apache.kyuubi.events.{EventBus, KyuubiOperationEvent}
+import org.apache.kyuubi.metrics.MetricsConstants.{OPERATION_FAIL, OPERATION_OPEN, OPERATION_STATE, OPERATION_TOTAL}
 import org.apache.kyuubi.metrics.MetricsSystem
 import org.apache.kyuubi.operation.FetchOrientation.FetchOrientation
-import org.apache.kyuubi.operation.OperationType.OperationType
-import org.apache.kyuubi.session.Session
+import org.apache.kyuubi.operation.OperationState.OperationState
+import org.apache.kyuubi.session.{KyuubiSessionImpl, KyuubiSessionManager, Session}
 import org.apache.kyuubi.util.ThriftUtils
 
-abstract class KyuubiOperation(
-    opType: OperationType,
-    session: Session,
-    client: KyuubiSyncThriftClient) extends AbstractOperation(opType, session) {
+abstract class KyuubiOperation(session: Session) extends AbstractOperation(session) {
+
+  MetricsSystem.tracing { ms =>
+    ms.incCount(MetricRegistry.name(OPERATION_OPEN, opType))
+    ms.incCount(MetricRegistry.name(OPERATION_TOTAL, opType))
+    ms.markMeter(MetricRegistry.name(OPERATION_STATE, opType, state.toString.toLowerCase))
+    ms.incCount(MetricRegistry.name(OPERATION_TOTAL))
+    ms.markMeter(MetricRegistry.name(OPERATION_STATE, state.toString.toLowerCase))
+  }
+
+  protected[operation] lazy val client = session.asInstanceOf[KyuubiSessionImpl].client
 
   @volatile protected var _remoteOpHandle: TOperationHandle = _
 
@@ -51,24 +58,25 @@ abstract class KyuubiOperation(
     case e: Throwable =>
       state.synchronized {
         if (isTerminalState(state)) {
-          warn(s"Ignore exception in terminal state with $statementId: $e")
+          warn(s"Ignore exception in terminal state with $statementId", e)
         } else {
           val errorType = e.getClass.getSimpleName
-          MetricsSystem.tracing {
-            _.incCount(MetricRegistry.name(STATEMENT_FAIL, errorType))
-          }
-          setState(OperationState.ERROR)
+          MetricsSystem.tracing(_.incCount(
+            MetricRegistry.name(OPERATION_FAIL, opType, errorType)))
           val ke = e match {
             case kse: KyuubiSQLException => kse
-            case te: TTransportException if te.getType == TTransportException.END_OF_FILE &&
-                StringUtils.isEmpty(te.getMessage) =>
+            case te: TTransportException
+                if te.getType == TTransportException.END_OF_FILE &&
+                  StringUtils.isEmpty(te.getMessage) =>
               // https://issues.apache.org/jira/browse/THRIFT-4858
               KyuubiSQLException(
-                s"Error $action $opType: Socket for ${session.handle} is closed", e)
+                s"Error $action $opType: Socket for ${session.handle} is closed",
+                e)
             case e =>
               KyuubiSQLException(s"Error $action $opType: ${Utils.stringifyException(e)}", e)
           }
           setOperationException(ke)
+          setState(OperationState.ERROR)
           throw ke
         }
       }
@@ -77,6 +85,16 @@ abstract class KyuubiOperation(
   override protected def beforeRun(): Unit = {
     setHasResultSet(true)
     setState(OperationState.RUNNING)
+    sendCredentialsIfNeeded()
+  }
+
+  protected def sendCredentialsIfNeeded(): Unit = {
+    val appUser = session.asInstanceOf[KyuubiSessionImpl].engine.appUser
+    val sessionManager = session.sessionManager.asInstanceOf[KyuubiSessionManager]
+    sessionManager.credentialsManager.sendCredentialsIfNeeded(
+      session.handle.identifier.toString,
+      appUser,
+      client.sendCredentials)
   }
 
   override protected def afterRun(): Unit = {
@@ -90,6 +108,7 @@ abstract class KyuubiOperation(
   override def cancel(): Unit = state.synchronized {
     if (!isClosedOrCanceled) {
       setState(OperationState.CANCELED)
+      MetricsSystem.tracing(_.decCount(MetricRegistry.name(OPERATION_OPEN, opType)))
       if (_remoteOpHandle != null) {
         try {
           client.cancelOperation(_remoteOpHandle)
@@ -104,24 +123,26 @@ abstract class KyuubiOperation(
   override def close(): Unit = state.synchronized {
     if (!isClosedOrCanceled) {
       setState(OperationState.CLOSED)
+      MetricsSystem.tracing(_.decCount(MetricRegistry.name(OPERATION_OPEN, opType)))
+      try {
+        // For launch engine operation, we use OperationLog to pass engine submit log but
+        // at that time we do not have remoteOpHandle
+        getOperationLog.foreach(_.close())
+      } catch {
+        case e: IOException => error(e.getMessage, e)
+      }
       if (_remoteOpHandle != null) {
-        try {
-          getOperationLog.foreach(_.close())
-        } catch {
-          case e: IOException => error(e.getMessage, e)
-        }
-
         try {
           client.closeOperation(_remoteOpHandle)
         } catch {
-          case e @(_: TException | _: KyuubiSQLException) =>
+          case e @ (_: TException | _: KyuubiSQLException) =>
             warn(s"Error closing ${_remoteOpHandle.getOperationId}: ${e.getMessage}", e)
         }
       }
     }
   }
 
-  override def getResultSetSchema: TTableSchema = {
+  override def getResultSetMetadata: TGetResultSetMetadataResp = {
     if (_remoteOpHandle == null) {
       val tColumnDesc = new TColumnDesc()
       tColumnDesc.setColumnName("Result")
@@ -131,7 +152,10 @@ abstract class KyuubiOperation(
       tColumnDesc.setPosition(0)
       val schema = new TTableSchema()
       schema.addToColumns(tColumnDesc)
-      schema
+      val resp = new TGetResultSetMetadataResp
+      resp.setSchema(schema)
+      resp.setStatus(OK_STATUS)
+      resp
     } else {
       client.getResultSetMetadata(_remoteOpHandle)
     }
@@ -145,4 +169,20 @@ abstract class KyuubiOperation(
   }
 
   override def shouldRunAsync: Boolean = false
+
+  protected def eventEnabled: Boolean = false
+
+  if (eventEnabled) EventBus.post(KyuubiOperationEvent(this))
+
+  override def setState(newState: OperationState): Unit = {
+    MetricsSystem.tracing { ms =>
+      if (!OperationState.isTerminal(state)) {
+        ms.markMeter(MetricRegistry.name(OPERATION_STATE, opType, state.toString.toLowerCase), -1)
+      }
+      ms.markMeter(MetricRegistry.name(OPERATION_STATE, opType, newState.toString.toLowerCase))
+      ms.markMeter(MetricRegistry.name(OPERATION_STATE, newState.toString.toLowerCase))
+    }
+    super.setState(newState)
+    if (eventEnabled) EventBus.post(KyuubiOperationEvent(this))
+  }
 }

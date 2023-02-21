@@ -20,10 +20,10 @@
 # Utility for creating well-formed pull request merges and pushing them to Kyuubi
 # For committers:
 # Please check your local git envs via `git remote -v` which should
-# apache	git@github.com:apache/incubator-kyuubi.git (fetch)
-# apache	git@github.com:apache/incubator-kyuubi.git (push)
-# origin	git@github.com:[ YOUR GITHUB USER NAME ]/incubator-kyuubi.git (fetch)
-# origin	git@github.com:[ YOUR GITHUB USER NAME ]/incubator-kyuubi.git (push)
+# apache	git@github.com:apache/kyuubi.git (fetch)
+# apache	git@github.com:apache/kyuubi.git (push)
+# origin	git@github.com:[ YOUR GITHUB USER NAME ]/kyuubi.git (fetch)
+# origin	git@github.com:[ YOUR GITHUB USER NAME ]/kyuubi.git (push)
 
 import json
 import os
@@ -38,7 +38,7 @@ KYUUBI_HOME = os.environ.get("KYUUBI_HOME", os.getcwd())
 PR_REMOTE_NAME = os.environ.get("PR_REMOTE_NAME", "apache")
 PUSH_REMOTE_NAME = os.environ.get("PUSH_REMOTE_NAME", "apache")
 GITHUB_OAUTH_KEY = os.environ.get("GITHUB_OAUTH_KEY")
-GITHUB_API_BASE = "https://api.github.com/repos/apache/incubator-kyuubi"
+GITHUB_API_BASE = "https://api.github.com/repos/apache/kyuubi"
 BRANCH_PREFIX = "PR_TOOL"
 
 
@@ -243,7 +243,7 @@ def main():
     url = pr["url"]
     title = pr["title"]
     title = fix_title(title, pr_num)
-    body = pr["body"]
+    body = re.sub(re.compile(r"<!--[^>]*-->\n?", re.DOTALL), "", pr["body"]).lstrip()
     target_ref = pr["base"]["ref"]
     user_login = pr["user"]["login"]
     base_ref = pr["head"]["ref"]
@@ -274,8 +274,8 @@ def main():
         continue_maybe(msg)
 
     print("\n=== Pull Request #%s ===" % pr_num)
-    print("title\t%s\nsource\t%s\ntarget\t%s\nurl\t%s" %
-          (title, pr_repo_desc, target_ref, url))
+    print("title:\t%s\nsource:\t%s\ntarget:\t%s\nurl:\t%s\nbody:\n\n%s" %
+          (title, pr_repo_desc, target_ref, url, body))
     continue_maybe("Proceed with merging pull request #%s?" % pr_num)
 
     merged_refs = [target_ref]

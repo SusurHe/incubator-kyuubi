@@ -15,21 +15,20 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>org.apache.kyuubi</groupId>
         <artifactId>kyuubi-parent</artifactId>
-        <version>1.4.0-SNAPSHOT</version>
+        <version>1.8.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
-    <modelVersion>4.0.0</modelVersion>
 
     <artifactId>kyuubi-download</artifactId>
     <packaging>pom</packaging>
     <name>Kyuubi Project Download Externals</name>
+    <url>https://kyuubi.apache.org/</url>
 
     <build>
         <plugins>
@@ -37,30 +36,51 @@
                 <groupId>com.googlecode.maven-download-plugin</groupId>
                 <artifactId>download-maven-plugin</artifactId>
                 <configuration>
-                    <skip>${spark.archive.download.skip}</skip>
+                    <cacheDirectory>${maven.plugin.download.cache.path}</cacheDirectory>
+                    <outputDirectory>${project.build.directory}</outputDirectory>
+                    <readTimeOut>60000</readTimeOut>
+                    <retries>3</retries>
+                    <unpack>true</unpack>
                 </configuration>
                 <executions>
                     <execution>
                         <id>download-spark-release</id>
-                        <phase>compile</phase>
                         <goals>
                             <goal>wget</goal>
                         </goals>
+                        <phase>compile</phase>
                         <configuration>
+                            <skip>${spark.archive.download.skip}</skip>
                             <url>${spark.archive.mirror}/${spark.archive.name}</url>
-                            <!-- sha512>${spark.archive.sha512}</sha512 -->
-                            <outputDirectory>${project.build.directory}</outputDirectory>
-                            <readTimeOut>60000</readTimeOut>
-                            <retries>3</retries>
-                            <unpack>true</unpack>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>download-flink-release</id>
+                        <goals>
+                            <goal>wget</goal>
+                        </goals>
+                        <phase>compile</phase>
+                        <configuration>
+                            <skip>${flink.archive.download.skip}</skip>
+                            <url>${flink.archive.mirror}/${flink.archive.name}</url>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>download-hive-release</id>
+                        <goals>
+                            <goal>wget</goal>
+                        </goals>
+                        <phase>compile</phase>
+                        <configuration>
+                            <skip>${hive.archive.download.skip}</skip>
+                            <url>${hive.archive.mirror}/${hive.archive.name}</url>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
 
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-deploy-plugin</artifactId>
+                <artifactId>maven-remote-resources-plugin</artifactId>
                 <configuration>
                     <skip>true</skip>
                 </configuration>

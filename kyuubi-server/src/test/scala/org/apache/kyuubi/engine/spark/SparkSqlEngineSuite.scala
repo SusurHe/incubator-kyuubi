@@ -34,17 +34,17 @@ class SparkSqlEngineSuite extends WithKyuubiServer with HiveJDBCTestHelper {
     val sparkHiveConfs = Map("spark.sql.abc.xyz" -> "123", "spark.sql.abc.xyz0" -> "123")
     val sparkHiveVars = Map("spark.sql.abc.var" -> "123", "spark.sql.abc.var0" -> "123")
     withSessionConf(sessionConf)(sparkHiveConfs)(sparkHiveVars) {
-     withJdbcStatement() { statement =>
-       Seq("spark.sql.abc.xyz", "spark.sql.abc.var").foreach { key =>
-         val rs1 = statement.executeQuery(s"SET ${key}0")
-         assert(rs1.next())
-         assert(rs1.getString("value") === "123")
-         val rs2 = statement.executeQuery(s"SET $key")
-         assert(rs2.next())
-         assert(rs2.getString("value") === "<undefined>", "ignored")
-       }
-     }
-   }
+      withJdbcStatement() { statement =>
+        Seq("spark.sql.abc.xyz", "spark.sql.abc.var").foreach { key =>
+          val rs1 = statement.executeQuery(s"SET ${key}0")
+          assert(rs1.next())
+          assert(rs1.getString("value") === "123")
+          val rs2 = statement.executeQuery(s"SET $key")
+          assert(rs2.next())
+          assert(rs2.getString("value") === "<undefined>", "ignored")
+        }
+      }
+    }
   }
 
   test("restricted config via system settings") {
@@ -54,7 +54,8 @@ class SparkSqlEngineSuite extends WithKyuubiServer with HiveJDBCTestHelper {
         sessionConfMap.keys.foreach { key =>
           val rs = statement.executeQuery(s"SET $key")
           assert(rs.next())
-          assert(rs.getString("value") === "<undefined>",
+          assert(
+            rs.getString("value") === "<undefined>",
             "session configs do not reach on server-side")
         }
 
@@ -69,7 +70,6 @@ class SparkSqlEngineSuite extends WithKyuubiServer with HiveJDBCTestHelper {
       assertJDBCConnectionFail()
     }
   }
-
 
   test("Fail connections on invalid sub domains") {
     Seq("/", "/tmp", "", "abc/efg", ".", "..").foreach { invalid =>
@@ -121,6 +121,31 @@ class SparkSqlEngineSuite extends WithKyuubiServer with HiveJDBCTestHelper {
         mem = rs.getString(2)
         assert(mem === "1002M", "The sub-domain is changed, so the engine recreated")
       }
+    }
+  }
+
+  test("KYUUBI-1784: float types should not lose precision") {
+    withJdbcStatement() { statement =>
+      val resultSet = statement.executeQuery("SELECT cast(0.1 as float) AS col")
+      assert(resultSet.next())
+      assert(resultSet.getString("col") == "0.1")
+    }
+  }
+
+  test("Spark session timezone format") {
+    withJdbcStatement() { statement =>
+      val setUTCResultSet = statement.executeQuery("set spark.sql.session.timeZone=UTC")
+      assert(setUTCResultSet.next())
+      val utcResultSet = statement.executeQuery("select from_utc_timestamp(from_unixtime(" +
+        "1670404535000/1000,'yyyy-MM-dd HH:mm:ss'),'GMT+08:00')")
+      assert(utcResultSet.next())
+      assert(utcResultSet.getString(1) === "2022-12-07 17:15:35.0")
+      val setGMT8ResultSet = statement.executeQuery("set spark.sql.session.timeZone=GMT+8")
+      assert(setGMT8ResultSet.next())
+      val gmt8ResultSet = statement.executeQuery("select from_utc_timestamp(from_unixtime(" +
+        "1670404535000/1000,'yyyy-MM-dd HH:mm:ss'),'GMT+08:00')")
+      assert(gmt8ResultSet.next())
+      assert(gmt8ResultSet.getString(1) === "2022-12-08 01:15:35.0")
     }
   }
 

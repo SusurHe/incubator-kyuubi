@@ -1,33 +1,27 @@
 <!--
- - Licensed to the Apache Software Foundation (ASF) under one or more
- - contributor license agreements.  See the NOTICE file distributed with
- - this work for additional information regarding copyright ownership.
- - The ASF licenses this file to You under the Apache License, Version 2.0
- - (the "License"); you may not use this file except in compliance with
- - the License.  You may obtain a copy of the License at
- -
- -   http://www.apache.org/licenses/LICENSE-2.0
- -
- - Unless required by applicable law or agreed to in writing, software
- - distributed under the License is distributed on an "AS IS" BASIS,
- - WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- - See the License for the specific language governing permissions and
- - limitations under the License.
- -->
-
-<div align=center>
-
-![](../imgs/kyuubi_logo.png)
-
-</div>
+- Licensed to the Apache Software Foundation (ASF) under one or more
+- contributor license agreements.  See the NOTICE file distributed with
+- this work for additional information regarding copyright ownership.
+- The ASF licenses this file to You under the Apache License, Version 2.0
+- (the "License"); you may not use this file except in compliance with
+- the License.  You may obtain a copy of the License at
+-
+-   http://www.apache.org/licenses/LICENSE-2.0
+-
+- Unless required by applicable law or agreed to in writing, software
+- distributed under the License is distributed on an "AS IS" BASIS,
+- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- See the License for the specific language governing permissions and
+- limitations under the License.
+-->
 
 # Kyuubi v.s. Spark Thrift JDBC/ODBC Server (STS)
 
 ## Introductions
 
-The Apache Spark [Thrift JDBC/ODBC Server](http://spark.apache.org/docs/latest/sql-distributed-sql-engine.html) is a Thrift service implemented by the Apache Spark community based on HiveServer2.
+The Apache Spark [Thrift JDBC/ODBC Server](https://spark.apache.org/docs/latest/sql-distributed-sql-engine.html) is a Thrift service implemented by the Apache Spark community based on HiveServer2.
 Designed to be seamlessly compatible with HiveServer2, it provides Spark SQL capabilities to end-users in a pure SQL way through a JDBC interface.
-This "out-of-the-box" model minimizes the barriers and costs for users to use Spark. 
+This "out-of-the-box" model minimizes the barriers and costs for users to use Spark.
 
 Kyuubi and Spark are aligned in this goal.
 On top of that, Kyuubi has made enhancements in multi-tenant support, service availability, service concurrency capability, data security, and other aspects.
@@ -53,7 +47,7 @@ If they use too many resources, will it affect other critical tasks?
 Otherwise, will the cluster's resources be idle and wasted?
 It is also hard for users to set up thousands of Spark configurations properly.
 Key features like [Dynamic Resource Allocation](../deployment/spark/dynamic_allocation.md), Speculation might be hard to benefit all with a one-time setup.
-And new features like [Adaptive Query Execution](../deployment/spark/aqe.md) could come a long way from the first release involved of Spark to finally get applied to end-users. 
+And new features like [Adaptive Query Execution](../deployment/spark/aqe.md) could come a long way from the first release involved of Spark to finally get applied to end-users.
 
 #### Insecurity
 
@@ -103,7 +97,6 @@ The server-side upgrade will not cause interface incompatibility.
 As for the potential SQL compatibility problem in Spark version upgrade, it also exists when not using Spark ThriftServer, and is more challenging to solve.
 Moreover, in Spark ThriftServer mode, the server-side can do the full amount of SQL collection in advance, and the verification can be done before the upgrade.
 
-
 ## Limitations of Spark ThriftServer
 
 As we can see from the basic architecture of Spark ThriftServer above, it is essentially a single Spark application, and there are generally significant limitations to responding to thousands of client requests.
@@ -124,7 +117,7 @@ With Fair Scheduler Pools, Spark ThriftServer has the ability of resource isolat
 It will send queries to a high-weight pool to get more executors for execution.
 In essence, resource isolation such as CPU/memory/IO should be something that resource managers like YARN and Kubernetes should do.
 Doing logical isolation at the computing layer is unlikely to work well, and this problem exists in the Apache Impala project as well, for example.
-And it is difficult to avoid the problem of HMS, HDFS  single point access, especially in the scenario of reading and writing dynamic partition tables or handling queries with numerous `Union`s. 
+And it is difficult to avoid the problem of HMS, HDFS  single point access, especially in the scenario of reading and writing dynamic partition tables or handling queries with numerous `Union`s.
 
 ### Multi-tenancy limitations
 
@@ -167,7 +160,6 @@ Besides, since UDFs are loaded directly into the Spark ThriftServer, if they con
 
 The HiveServer2 is also introduced here for a more comprehensive comparison.
 
-
 || HiveServer2 <br/>(Hive on Spark) | Spark ThriftServer | Kyuubi |
 |--|--|--|--|
 |**Interface** | HiveJDBC | HiveJDBC | HiveJDBC |
@@ -182,21 +174,20 @@ The HiveServer2 is also introduced here for a more comprehensive comparison.
 |**Multi<br/>tenancy** | Yes | No | Yes|
 |**Permission<br/>Control** | SQL Standard,<br/>Fine-Grained | No | SQL Standard,<br/>Fine-Grained |
 |**Performance** | Fair | Good | Good |
-|**Client<br/>Concurrency** | High | Low | High
+|**Client<br/>Concurrency** | High | Low | High |
 |**Queuing** | for queries | None | for Engines|
 |**Resource<br/>Setting** | for queries | for pools | for Engines|
 |**Compute<br/>Resource<br/>Management** | YARN |pools| YARN, Kubernetes, etc. |
 |**Resource<br/>Occupancy<br/>Time** | within a query | Permanent | Using Kyuubi Engine to request and<br/> release resources<br/> 1. For `CONNECTION` level isolation, an Engine terminates when a JDBC connection disconnects <br/> 2. For other modes, an Engine timeouts after all connections disconnect. <br/> 3. All isolation modes support [DRA](../deployment/spark/dynamic_allocation.md)<br/>|
 
-###  Consistent Interfaces
+### Consistent Interfaces
 
 Kyuubi, Spark Thrift Server, and HiveServer2 are identical in terms of interfaces and protocols.
 Therefore, from the user's point of view, the way of use is unchanged.
-Compared with HiveServer2, the most significant advantage of the first two should be the performance improvement. 
+Compared with HiveServer2, the most significant advantage of the first two should be the performance improvement.
 
 From the perspective of SQL syntax compatibility, Kyuubi and Spark Thrift Server are fully compatible with Spark SQL as they are completely delegated to the Spark SQL Catalyst layer.
 Spark SQL also fully supports Hive QL collections, with only a few enumerable SQL behaviors and syntax differences.
-
 
 ### Multi-tenant Architecture
 
@@ -226,7 +217,7 @@ Inside an Engine, the Engine's user, a.k.a. `Spark User`, will also be the same.
 When an Engine runs queries received from the JDBC connection, the Engine's user must also have rights to access the data.
 Besides, if it needs access to metadata during this process, then we can also add a fine-grained SQL standard ACL management on the metadata layer now with [Submarine Spark Security Plugin](https://submarine.apache.org/docs/userDocs/submarine-security/spark-security/README).
 
-The Engines have their lifecycle, which is related to the `kyuubi.session.engine.share.level` specified via client configurations.
+The Engines have their lifecycle, which is related to the `kyuubi.engine.share.level` specified via client configurations.
 For example, if set to `CONNECTION`, then the corresponding Engine will be created for each JDBC connection and terminates itself when we close the connection.
 For another example, if set to `USER`,  the corresponding Engine is cached and shared with all JDBC connections from the same user, even through different Kyuubi servers in HA mode.
 The Engine will eventually timeout after all the sessions are closed.

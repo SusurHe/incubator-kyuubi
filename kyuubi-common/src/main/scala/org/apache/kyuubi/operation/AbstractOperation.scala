@@ -17,36 +17,65 @@
 
 package org.apache.kyuubi.operation
 
-import java.util.concurrent.Future
+import java.util.concurrent.{Future, ScheduledExecutorService, TimeUnit}
 
-import org.apache.hive.service.rpc.thrift.{TProtocolVersion, TRowSet, TTableSchema}
+import scala.collection.JavaConverters._
+
+import org.apache.commons.lang3.StringUtils
+import org.apache.hive.service.rpc.thrift.{TGetResultSetMetadataResp, TProgressUpdateResp, TProtocolVersion, TRowSet, TStatus, TStatusCode}
 
 import org.apache.kyuubi.{KyuubiSQLException, Logging}
 import org.apache.kyuubi.config.KyuubiConf.OPERATION_IDLE_TIMEOUT
 import org.apache.kyuubi.operation.FetchOrientation.FetchOrientation
 import org.apache.kyuubi.operation.OperationState._
-import org.apache.kyuubi.operation.OperationType.OperationType
 import org.apache.kyuubi.operation.log.OperationLog
 import org.apache.kyuubi.session.Session
+import org.apache.kyuubi.util.ThreadUtils
 
-abstract class AbstractOperation(opType: OperationType, session: Session)
-  extends Operation with Logging {
+abstract class AbstractOperation(session: Session) extends Operation with Logging {
 
-  private final val handle = OperationHandle(opType, session.protocol)
-  private final val operationTimeout: Long = {
+  final protected val opType: String = getClass.getSimpleName
+  final protected val createTime = System.currentTimeMillis()
+  final private val handle = OperationHandle()
+  final private val operationTimeout: Long = {
     session.sessionManager.getConf.get(OPERATION_IDLE_TIMEOUT)
   }
 
-  protected final val statementId = handle.identifier.toString
+  final private[kyuubi] val statementId = handle.identifier.toString
+
+  private var statementTimeoutCleaner: Option[ScheduledExecutorService] = None
+
+  protected def cleanup(targetState: OperationState): Unit = state.synchronized {
+    if (!isTerminalState(state)) {
+      setState(targetState)
+      Option(getBackgroundHandle).foreach(_.cancel(true))
+    }
+  }
+
+  protected def addTimeoutMonitor(queryTimeout: Long): Unit = {
+    if (queryTimeout > 0) {
+      val timeoutExecutor =
+        ThreadUtils.newDaemonSingleThreadScheduledExecutor("query-timeout-thread", false)
+      val action: Runnable = () => cleanup(OperationState.TIMEOUT)
+      timeoutExecutor.schedule(action, queryTimeout, TimeUnit.SECONDS)
+      statementTimeoutCleaner = Some(timeoutExecutor)
+    }
+  }
+
+  protected def shutdownTimeoutMonitor(): Unit = {
+    statementTimeoutCleaner.foreach(_.shutdown())
+  }
 
   override def getOperationLog: Option[OperationLog] = None
 
   @volatile protected var state: OperationState = INITIALIZED
   @volatile protected var startTime: Long = _
   @volatile protected var completedTime: Long = _
-  @volatile protected var lastAccessTime: Long = System.currentTimeMillis()
+  @volatile protected var lastAccessTime: Long = createTime
 
   @volatile protected var operationException: KyuubiSQLException = _
+  @volatile protected var operationJobProgress: TProgressUpdateResp = _
+
   @volatile protected var hasResultSet: Boolean = false
 
   @volatile private var _backgroundHandle: Future[_] = _
@@ -57,7 +86,9 @@ abstract class AbstractOperation(opType: OperationType, session: Session)
 
   def getBackgroundHandle: Future[_] = _backgroundHandle
 
-  protected def statement: String = opType.toString
+  def statement: String = opType
+
+  def redactedStatement: String = statement
 
   protected def setHasResultSet(hasResultSet: Boolean): Unit = {
     this.hasResultSet = hasResultSet
@@ -68,18 +99,24 @@ abstract class AbstractOperation(opType: OperationType, session: Session)
     this.operationException = opEx
   }
 
+  def setOperationJobProgress(opJobProgress: TProgressUpdateResp): Unit = {
+    this.operationJobProgress = opJobProgress
+  }
+
   protected def setState(newState: OperationState): Unit = {
     OperationState.validateTransition(state, newState)
-    var timeCost = ""
     newState match {
-      case RUNNING => startTime = System.currentTimeMillis()
+      case RUNNING =>
+        info(s"Processing ${session.user}'s query[$statementId]: " +
+          s"${state.name} -> ${newState.name}, statement:\n$redactedStatement")
+        startTime = System.currentTimeMillis()
       case ERROR | FINISHED | CANCELED | TIMEOUT =>
         completedTime = System.currentTimeMillis()
-        timeCost = s", time taken: ${(completedTime - startTime) / 1000.0} seconds"
+        val timeCost = s", time taken: ${(completedTime - startTime) / 1000.0} seconds"
+        info(s"Processing ${session.user}'s query[$statementId]: " +
+          s"${state.name} -> ${newState.name}$timeCost")
       case _ =>
     }
-    info(s"Processing ${session.user}'s query[$statementId]: ${state.name} -> ${newState.name}," +
-      s" statement: $statement$timeCost")
     state = newState
     lastAccessTime = System.currentTimeMillis()
   }
@@ -136,18 +173,50 @@ abstract class AbstractOperation(opType: OperationType, session: Session)
 
   override def close(): Unit
 
-  override def getProtocolVersion: TProtocolVersion = handle.protocol
+  protected def getProtocolVersion: TProtocolVersion = session.protocol
 
-  override def getResultSetSchema: TTableSchema
+  override def getResultSetMetadata: TGetResultSetMetadataResp
 
   override def getNextRowSet(order: FetchOrientation, rowSetSize: Int): TRowSet
+
+  /**
+   * convert SQL 'like' pattern to a Java regular expression.
+   *
+   * Underscores (_) are converted to '.' and percent signs (%) are converted to '.*'.
+   *
+   * (referred to Spark's implementation: convertPattern function in file MetadataOperation.java)
+   *
+   * @param input the SQL pattern to convert
+   * @return the equivalent Java regular expression of the pattern
+   */
+  protected def toJavaRegex(input: String): String = {
+    val res =
+      if (StringUtils.isEmpty(input) || input == "*") {
+        "%"
+      } else {
+        input
+      }
+    val wStr = ".*"
+    res
+      .replaceAll("([^\\\\])%", "$1" + wStr).replaceAll("\\\\%", "%").replaceAll("^%", wStr)
+      .replaceAll("([^\\\\])_", "$1.").replaceAll("\\\\_", "_").replaceAll("^_", ".")
+  }
 
   override def getSession: Session = session
 
   override def getHandle: OperationHandle = handle
 
   override def getStatus: OperationStatus = {
-    OperationStatus(state, startTime, completedTime, hasResultSet, Option(operationException))
+    lastAccessTime = System.currentTimeMillis()
+    OperationStatus(
+      state,
+      createTime,
+      startTime,
+      lastAccessTime,
+      completedTime,
+      hasResultSet,
+      Option(operationException),
+      Option(operationJobProgress))
   }
 
   override def shouldRunAsync: Boolean
@@ -157,7 +226,15 @@ abstract class AbstractOperation(opType: OperationType, session: Session)
       false
     } else {
       OperationState.isTerminal(state) &&
-        lastAccessTime + operationTimeout <= System.currentTimeMillis()
+      lastAccessTime + operationTimeout <= System.currentTimeMillis()
     }
+  }
+
+  final val OK_STATUS = new TStatus(TStatusCode.SUCCESS_STATUS)
+
+  def okStatusWithHints(hints: Seq[String]): TStatus = {
+    val ok = new TStatus(TStatusCode.SUCCESS_STATUS)
+    ok.setInfoMessages(hints.asJava)
+    ok
   }
 }

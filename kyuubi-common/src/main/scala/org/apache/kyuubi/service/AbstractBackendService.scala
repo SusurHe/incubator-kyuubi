@@ -21,7 +21,7 @@ import java.util.concurrent.{ExecutionException, TimeoutException, TimeUnit}
 
 import scala.concurrent.CancellationException
 
-import org.apache.hive.service.rpc.thrift.{TGetInfoType, TGetInfoValue, TProtocolVersion, TRowSet, TTableSchema}
+import org.apache.hive.service.rpc.thrift.{TGetInfoType, TGetInfoValue, TGetResultSetMetadataResp, TProtocolVersion, TRowSet}
 
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.operation.{OperationHandle, OperationStatus}
@@ -56,9 +56,14 @@ abstract class AbstractBackendService(name: String)
   override def executeStatement(
       sessionHandle: SessionHandle,
       statement: String,
+      confOverlay: Map[String, String],
       runAsync: Boolean,
       queryTimeout: Long): OperationHandle = {
-    sessionManager.getSession(sessionHandle).executeStatement(statement, runAsync, queryTimeout)
+    sessionManager.getSession(sessionHandle).executeStatement(
+      statement,
+      confOverlay,
+      runAsync,
+      queryTimeout)
   }
 
   override def getTypeInfo(sessionHandle: SessionHandle): OperationHandle = {
@@ -116,11 +121,49 @@ abstract class AbstractBackendService(name: String)
       .getFunctions(catalogName, schemaName, functionName)
   }
 
-  override def getOperationStatus(operationHandle: OperationHandle): OperationStatus = {
+  override def getPrimaryKeys(
+      sessionHandle: SessionHandle,
+      catalogName: String,
+      schemaName: String,
+      tableName: String): OperationHandle = {
+    sessionManager
+      .getSession(sessionHandle)
+      .getPrimaryKeys(catalogName, schemaName, tableName)
+  }
+
+  override def getCrossReference(
+      sessionHandle: SessionHandle,
+      primaryCatalog: String,
+      primarySchema: String,
+      primaryTable: String,
+      foreignCatalog: String,
+      foreignSchema: String,
+      foreignTable: String): OperationHandle = {
+    sessionManager
+      .getSession(sessionHandle)
+      .getCrossReference(
+        primaryCatalog,
+        primarySchema,
+        primaryTable,
+        foreignCatalog,
+        foreignSchema,
+        foreignTable)
+  }
+
+  override def getQueryId(operationHandle: OperationHandle): String = {
+    val operation = sessionManager.operationManager.getOperation(operationHandle)
+    val queryId = sessionManager.operationManager.getQueryId(operation)
+    queryId
+  }
+
+  override def getOperationStatus(
+      operationHandle: OperationHandle,
+      maxWait: Option[Long]): OperationStatus = {
     val operation = sessionManager.operationManager.getOperation(operationHandle)
     if (operation.shouldRunAsync) {
       try {
-        operation.getBackgroundHandle.get(timeout, TimeUnit.MILLISECONDS)
+        val waitTime = maxWait.getOrElse(timeout)
+        operation.getBackgroundHandle.get(waitTime, TimeUnit.MILLISECONDS)
       } catch {
         case e: TimeoutException =>
           debug(s"$operationHandle: Long polling timed out, ${e.getMessage}")
@@ -148,7 +191,7 @@ abstract class AbstractBackendService(name: String)
       .getOperation(operationHandle).getSession.closeOperation(operationHandle)
   }
 
-  override def getResultSetMetadata(operationHandle: OperationHandle): TTableSchema = {
+  override def getResultSetMetadata(operationHandle: OperationHandle): TGetResultSetMetadataResp = {
     sessionManager.operationManager
       .getOperation(operationHandle).getSession.getResultSetMetadata(operationHandle)
   }

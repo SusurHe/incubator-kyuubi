@@ -19,6 +19,7 @@ package org.apache.kyuubi.operation
 
 import org.apache.kyuubi.IcebergSuiteMixin
 import org.apache.kyuubi.operation.meta.ResultSetSchemaConstant._
+import org.apache.kyuubi.util.SparkVersionUtil.isSparkVersionAtLeast
 
 trait IcebergMetadataTests extends HiveJDBCTestHelper with IcebergSuiteMixin {
 
@@ -41,7 +42,6 @@ trait IcebergMetadataTests extends HiveJDBCTestHelper with IcebergSuiteMixin {
       dbs.foreach(db => statement.execute(s"CREATE NAMESPACE IF NOT EXISTS $db"))
       val metaData = statement.getConnection.getMetaData
 
-
       // The session catalog
       matchAllPatterns foreach { pattern =>
         checkGetSchemas(metaData.getSchemas("spark_catalog", pattern), dbDflts, "spark_catalog")
@@ -50,7 +50,9 @@ trait IcebergMetadataTests extends HiveJDBCTestHelper with IcebergSuiteMixin {
       Seq(null, catalog).foreach { cg =>
         matchAllPatterns foreach { pattern =>
           checkGetSchemas(
-            metaData.getSchemas(cg, pattern), dbs ++ Seq("global_temp"), catalog)
+            metaData.getSchemas(cg, pattern),
+            dbs,
+            catalog)
         }
       }
 
@@ -83,13 +85,17 @@ trait IcebergMetadataTests extends HiveJDBCTestHelper with IcebergSuiteMixin {
 
       Seq(null, catalog).foreach { cg =>
         matchAllPatterns foreach { pattern =>
-          checkGetSchemas(metaData.getSchemas(cg, pattern),
-            dbs ++ Seq("global_temp", "a", "db1", "db1.db2"), catalog)
+          checkGetSchemas(
+            metaData.getSchemas(cg, pattern),
+            dbs ++ Seq("a", "db1", "db1.db2"),
+            catalog)
         }
       }
 
-      checkGetSchemas(metaData.getSchemas(catalog, "db1.db2%"),
-        Seq("db1.db2", "db1.db2.db3"), catalog)
+      checkGetSchemas(
+        metaData.getSchemas(catalog, "db1.db2%"),
+        Seq("db1.db2", "db1.db2.db3"),
+        catalog)
     }
   }
 
@@ -132,10 +138,26 @@ trait IcebergMetadataTests extends HiveJDBCTestHelper with IcebergSuiteMixin {
   }
 
   test("get columns operation") {
-    val dataTypes = Seq("boolean", "int", "bigint",
-      "float", "double", "decimal(38,20)", "decimal(10,2)",
-      "string", "array<bigint>", "array<string>", "map<int, bigint>",
-      "date", "timestamp", "struct<`X`: bigint, `Y`: double>", "binary", "struct<`X`: string>")
+    val dataTypes = Seq(
+      "boolean",
+      "int",
+      "bigint",
+      "float",
+      "double",
+      "decimal(38,20)",
+      "decimal(10,2)",
+      "string",
+      "array<bigint>",
+      "array<string>",
+      "map<int, bigint>",
+      "date",
+      "timestamp",
+      // SPARK-37931
+      if (isSparkVersionAtLeast("3.3")) "struct<X: bigint, Y: double>"
+      else "struct<`X`: bigint, `Y`: double>",
+      "binary",
+      // SPARK-37931
+      if (isSparkVersionAtLeast("3.3")) "struct<X: string>" else "struct<`X`: string>")
     val cols = dataTypes.zipWithIndex.map { case (dt, idx) => s"c$idx" -> dt }
     val (colNames, _) = cols.unzip
 
@@ -148,7 +170,6 @@ trait IcebergMetadataTests extends HiveJDBCTestHelper with IcebergSuiteMixin {
          |)
          |USING iceberg""".stripMargin
 
-
     withJdbcStatement(tableName) { statement =>
       statement.execute(ddl)
 
@@ -158,8 +179,22 @@ trait IcebergMetadataTests extends HiveJDBCTestHelper with IcebergSuiteMixin {
         val rowSet = metaData.getColumns(catalog, defaultSchema, tableName, columnPattern)
 
         import java.sql.Types._
-        val expectedJavaTypes = Seq(BOOLEAN, INTEGER, BIGINT, FLOAT, DOUBLE,
-          DECIMAL, DECIMAL, VARCHAR, ARRAY, ARRAY, JAVA_OBJECT, DATE, TIMESTAMP, STRUCT, BINARY,
+        val expectedJavaTypes = Seq(
+          BOOLEAN,
+          INTEGER,
+          BIGINT,
+          FLOAT,
+          DOUBLE,
+          DECIMAL,
+          DECIMAL,
+          VARCHAR,
+          ARRAY,
+          ARRAY,
+          JAVA_OBJECT,
+          DATE,
+          TIMESTAMP,
+          STRUCT,
+          BINARY,
           STRUCT)
 
         var pos = 0

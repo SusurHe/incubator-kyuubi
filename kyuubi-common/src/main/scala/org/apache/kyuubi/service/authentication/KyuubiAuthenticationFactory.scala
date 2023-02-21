@@ -32,11 +32,13 @@ import org.apache.thrift.transport.{TSaslServerTransport, TTransportException, T
 import org.apache.kyuubi.{KyuubiSQLException, Logging}
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.config.KyuubiConf._
+import org.apache.kyuubi.service.authentication.AuthMethods.AuthMethod
 import org.apache.kyuubi.service.authentication.AuthTypes._
 
-class KyuubiAuthenticationFactory(conf: KyuubiConf) extends Logging {
+class KyuubiAuthenticationFactory(conf: KyuubiConf, isServer: Boolean = true) extends Logging {
 
   private val authTypes = conf.get(AUTHENTICATION_METHOD).map(AuthTypes.withName)
+  private val none = authTypes.contains(NONE)
   private val noSasl = authTypes == Seq(NOSASL)
   private val kerberosEnabled = authTypes.contains(KERBEROS)
   private val plainAuthTypeOpt = authTypes.filterNot(_.equals(KERBEROS))
@@ -56,6 +58,10 @@ class KyuubiAuthenticationFactory(conf: KyuubiConf) extends Logging {
     }
   }
 
+  if (conf.get(ENGINE_SECURITY_ENABLED)) {
+    InternalSecurityAccessor.initialize(conf, isServer)
+  }
+
   private def getSaslProperties: java.util.Map[String, String] = {
     val props = new java.util.HashMap[String, String]()
     val qop = SaslQOP.withName(conf.get(SASL_QOP))
@@ -72,19 +78,23 @@ class KyuubiAuthenticationFactory(conf: KyuubiConf) extends Logging {
 
       hadoopAuthServer match {
         case Some(server) =>
-          transportFactory = try {
-            server.createSaslServerTransportFactory(getSaslProperties)
-          } catch {
-            case e: TTransportException => throw new LoginException(e.getMessage)
-          }
+          transportFactory =
+            try {
+              server.createSaslServerTransportFactory(getSaslProperties)
+            } catch {
+              case e: TTransportException => throw new LoginException(e.getMessage)
+            }
 
         case _ =>
       }
 
       plainAuthTypeOpt match {
         case Some(plainAuthType) =>
-          transportFactory = PlainSASLHelper.getTransportFactory(plainAuthType.toString, conf,
-            Option(transportFactory)).asInstanceOf[TSaslServerTransport.Factory]
+          transportFactory = PlainSASLHelper.getTransportFactory(
+            plainAuthType.toString,
+            conf,
+            Option(transportFactory),
+            isServer).asInstanceOf[TSaslServerTransport.Factory]
 
         case _ =>
       }
@@ -108,6 +118,31 @@ class KyuubiAuthenticationFactory(conf: KyuubiConf) extends Logging {
   def getIpAddress: Option[String] = {
     hadoopAuthServer.map(_.getRemoteAddress).map(_.getHostAddress)
       .orElse(Option(TSetIpAddressProcessor.getUserIpAddress))
+  }
+
+  def isNoSaslEnabled: Boolean = {
+    noSasl
+  }
+
+  def isKerberosEnabled: Boolean = {
+    kerberosEnabled
+  }
+
+  def isPlainAuthEnabled: Boolean = {
+    plainAuthTypeOpt.isDefined
+  }
+
+  def isNoneEnabled: Boolean = {
+    none
+  }
+
+  def getValidPasswordAuthMethod: AuthMethod = {
+    debug(authTypes)
+    if (none) AuthMethods.NONE
+    else if (authTypes.contains(LDAP)) AuthMethods.LDAP
+    else if (authTypes.contains(JDBC)) AuthMethods.JDBC
+    else if (authTypes.contains(CUSTOM)) AuthMethods.CUSTOM
+    else throw new IllegalArgumentException("No valid Password Auth detected")
   }
 }
 object KyuubiAuthenticationFactory {
@@ -138,7 +173,8 @@ object KyuubiAuthenticationFactory {
     } catch {
       case e: IOException =>
         throw KyuubiSQLException(
-          "Failed to validate proxy privilege of " + realUser + " for " + proxyUser, e)
+          "Failed to validate proxy privilege of " + realUser + " for " + proxyUser,
+          e)
     }
   }
 }
